@@ -1,5 +1,5 @@
-import type { DashboardData } from "./types.js";
-import { mockDashboardData } from "./mock/mockData.js";
+import type { DashboardData } from "./types";
+import { mockDashboardData } from "./mock/mockData";
 
 /**
  * The single seam the UI consumes. Today it resolves to the deterministic mock; a live

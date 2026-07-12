@@ -1,7 +1,16 @@
+import type { MarketKey } from "@tissue/shared";
+
 /**
  * Presentation-only formatters. Deterministic (UTC, fixed precision) so server render
  * and any client hydration agree. Numbers are meant to be shown with tabular-nums.
  */
+
+/** Human label for a market key ("1X2", "TOTALS@2.5"). Presentation of a domain type. */
+export function formatMarketKey(key: MarketKey): string {
+  return key.lineTimes10 == null
+    ? key.market
+    : `${key.market}@${key.lineTimes10 / 10}`;
+}
 
 /** MilliOdds (decimal odds × 1000) → "1.92". */
 export function formatMilliOdds(milliOdds: number): string {

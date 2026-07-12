@@ -1,6 +1,5 @@
 import type { RadarEvent } from "@tissue/shared";
-import { marketKeyString } from "@tissue/shared";
-import { formatBpsPct, formatClock, formatMs } from "@/lib/format";
+import { formatBpsPct, formatClock, formatMarketKey, formatMs } from "@/lib/format";
 import { ClassBadge } from "./ClassBadge";
 
 export function RadarList({ events }: { events: readonly RadarEvent[] }) {
@@ -27,7 +26,7 @@ export function RadarList({ events }: { events: readonly RadarEvent[] }) {
         >
           <span className="muted">{formatClock(event.eventTs)}</span>
           <ClassBadge signalClass={event.signalClass} />
-          <span>{marketKeyString(event.marketKey)}</span>
+          <span>{formatMarketKey(event.marketKey)}</span>
           <span className="muted">{event.triggerEvent.kind}</span>
           <span className="accent">{formatBpsPct(event.magnitudeBps)}</span>
           {event.reactionLatencyMs !== undefined ? (
