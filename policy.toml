@@ -1,0 +1,141 @@
+# TISSUE policy — every tunable constant lives here (PRD §4).
+# Nothing in the deterministic core reads a magic number; it reads this file.
+# Units are explicit in every key name. bps = basis points (1/10000).
+# All values are integers or decimals with documented units — no wall-clock,
+# no environment-derived values, so the pricing core stays replay-deterministic.
+
+schema_version = 1
+
+[markets]
+# Markets the desk is allowed to quote. Corners/cards switch on as the corpus grows.
+markets_enabled = ["1X2", "TOTALS"]
+in_play_enabled = true
+# One-fixture focus: staggered knockouts make single-match depth the correct scope.
+fixture_focus_mode = "single"
+
+[model]
+# Dixon & Coles (1997) low-score dependence parameter. Applied to the 0-0/1-0/0-1/1-1
+# cells of the score matrix. rho < 0 lifts draw/low-score mass (draw honesty).
+# Brier calibration decomposition will expose miscalibration publicly — by design.
+dc_rho = -0.13
+# Score matrix truncation: max goals per side considered in the Poisson grid.
+max_goals_per_side = 10
+# In-play remaining-time scaling: lambda_rem = lambda_total * f(t_rem).
+# f is linear in remaining fraction by default (see tissue/inplay.ts). Regular-time minutes.
+match_regulation_minutes = 90
+
+[model.red_card]
+# Multiplicative adjustment to a side's remaining lambda when it goes a man down.
+# Applied to the offending side's attack, and (inversely) to the opponent.
+# Empirical-ish placeholders; Daniel/Tim to calibrate against corpus.
+offending_side_attack_mult = 0.75
+opponent_side_attack_mult = 1.15
+
+[model.pressure]
+# Bounded, decaying pressure modifier from possession states
+# (Attack / Danger / HighDanger). FLAGGED HEURISTIC — on/off switch.
+# When enabled, nudges short-horizon lambda within [1-bound, 1+bound].
+enabled = true
+max_abs_adjustment = 0.12   # hard bound on the multiplier deviation from 1.0
+decay_half_life_ms = 45000  # pressure signal decays toward neutral with this half-life
+# Weights for each possession-state class contributing to the pressure score.
+attack_weight = 0.2
+danger_weight = 0.5
+high_danger_weight = 1.0
+
+[strategy]
+# Quote only when |edge| = |tissue_p - market_p| >= this threshold (de-vigged, bps).
+edge_threshold_bps = 150
+# Baseline half-spread applied around the reservation price (bps of probability).
+base_spread_bps = 80
+# Spread floor scales with feed staleness (adverse selection on the 60s tier, PRD §5).
+# Extra half-spread added per second of feed staleness beyond fresh.
+stale_spread_bps_per_sec = 25
+# Avellaneda–Stoikov-adapted inventory skew: reservation price shifts against inventory.
+# gamma_inventory scales how hard we lean quotes to mean-revert inventory to zero.
+gamma_inventory = 0.08
+
+[strategy.radar_conditioning]
+# Strategy conditions on Radar signal class (PRD §2 quote engine).
+aggressive_classes = ["stale-line", "late-reaction"]   # tighten / lean in
+widen_classes = ["overreaction", "favorite-panic"]     # widen spread
+halt_classes = ["unexplained-movement"]                # pull quotes (adverse selection)
+aggressive_spread_mult = 0.6   # multiply base spread when aggressive
+widen_spread_mult = 2.0        # multiply base spread when widening
+
+[sizing]
+# Capped fractional Kelly. size = kelly_fraction * full_kelly, clamped by caps below.
+kelly_fraction = 0.25
+min_stake_units = 1_000_000       # 0.001 SOL-equivalent lamports floor per intent
+max_stake_units = 500_000_000     # 0.5 SOL-equivalent lamports ceiling per intent
+
+[risk]
+# The risk module is the ONLY module authorized to green-light execution.
+exposure_cap_per_market_units = 2_000_000_000   # per market (e.g. 1X2) notional cap
+exposure_cap_per_fixture_units = 5_000_000_000  # per fixture aggregate notional cap
+max_open_intents = 12
+# Global drawdown kill — operator-restart-only (never auto-resumes).
+drawdown_kill_units = 3_000_000_000
+# Model-divergence sanity band: if |tissue_p - market_p| exceeds this, the model is
+# probably wrong about itself → pull + flag (protects against our own failure), bps.
+model_divergence_band_bps = 3500
+
+[feed]
+# Feed-health gate. Gap beyond this between heartbeats/messages ⇒ HALT (cancel all, SAFE).
+max_gap_ms = 8000
+# If only the delayed (60s) feed is healthy, in-play auto-off (PRD §5 adverse selection).
+in_play_requires_realtime = true
+# Staleness beyond which quotes are pulled even without a hard gap.
+soft_stale_ms = 4000
+
+[radar]
+# Radar window params are POLICY, not code (PRD §5). Daniel owns calibration (T5).
+# Trailing window in which a price move must be explained by a match event,
+# else it is 'unexplained-movement' → HALT.
+unexplained_window_ms = 20000
+# A price reaction counts as "significant" at or above this magnitude (bps of prob).
+significant_reaction_bps = 100
+# Stabilization: reaction considered stable once move rate drops below this (bps/sec)
+# sustained for stabilization_hold_ms.
+stabilization_rate_bps_per_sec = 15
+stabilization_hold_ms = 3000
+# Overreaction: a reaction that retraces >= this fraction within the window.
+overreaction_retrace_pct = 50
+# Empirical percentile bands (deterministic, no ML). Reaction latency below the
+# fast band = fast-reaction; above the slow band = late-reaction. Per class, ms.
+# These are seeds; percentile_calibration replaces them from the growing corpus.
+[radar.latency_bands_ms]
+"1X2" = { fast_p = 20, slow_p = 80, fast_ms = 1500, slow_ms = 9000 }
+"TOTALS" = { fast_p = 20, slow_p = 80, fast_ms = 2000, slow_ms = 11000 }
+
+[radar.draw_compression]
+# Draw-compression: late-match draw-odds tightening. Minute after which we watch,
+# and the compression magnitude (bps of prob) that flags the class.
+watch_after_minute = 75
+compression_bps = 150
+
+[exec]
+# EXECUTION MODEL (see GROUND-TRUTH.md, feedback.md): the sponsor devnet program has
+# NO intent-book. Matching/fills run through an internal SIMULATED maker book,
+# labeled 'simulated' everywhere it surfaces. Provenance anchoring via validate_odds
+# is REAL and callable today. A future real permissionless orderbook is a swap-in
+# behind the same exec/ port boundary.
+book_mode = "simulated"          # "simulated" | "onchain" (onchain = not-yet-available)
+anchor_mode = "devnet_validate_odds"  # real CPI anchoring of sampled decisions
+intent_ttl_ms = 30000            # posted intents expire (then Cancelled, residual refunded)
+# Priority-fee ladder on devnet congestion: escalate through these microlamports/CU,
+# then halt the market rather than fail silently.
+priority_fee_ladder_microlamports = [0, 1000, 10000, 50000]
+tx_max_retries = 3
+# Fraction of decisions whose inputs get anchored on-chain via validate_odds (sampling).
+anchor_sample_rate = 1.0
+
+[grader]
+# CLV graded whether matched or not (fill-independence, PRD §1.4). Closing line = last
+# market price before match end / market close.
+clv_reference = "closing_line"
+brier_calibration_bins = 10
+
+[replay]
+# Replay lab speeds (x realtime). Determinism asserted against the ledger in CI.
+speeds = [1, 5, 25, 100]

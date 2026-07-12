@@ -1,0 +1,14 @@
+# TISSUE — internal & vendored references are never committed
+/internal
+/resources
+.env*
+!.env.example
+corpus/
+dist/
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.DS_Store
+*.log
+/apps/daemon/.keys

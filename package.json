@@ -1,0 +1,22 @@
+{
+  "name": "tissue",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TISSUE — autonomous in-play trading desk with a latency radar and a backtest that can't lie",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm --filter @tissue/daemon test",
+    "test:run": "pnpm --filter @tissue/daemon test:run",
+    "typecheck": "pnpm -r typecheck",
+    "daemon": "pnpm --filter @tissue/daemon start",
+    "replay": "pnpm --filter @tissue/daemon replay",
+    "ci": "pnpm -r typecheck && pnpm --filter @tissue/daemon test:run"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
