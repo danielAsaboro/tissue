@@ -1,0 +1,292 @@
+import {
+  type FeedMessage,
+  type HaltSignal,
+  type MarketKey,
+  type OddsMessage,
+  type RadarEvent,
+  type RadarTriggerEvent,
+  type ScoreMessage,
+  bps,
+  marketKeyString,
+  millis,
+} from "@tissue/shared";
+import type { Policy } from "../config/policy.js";
+import { type LatencyBand, computeBand } from "./percentiles.js";
+import { type ClassifyConfig, type ReactionSummary, classifyReaction } from "./classify.js";
+
+/**
+ * Latency Radar engine (PRD §1.2). Consumes the ordered feed, keys market reactions to
+ * match events, and emits a RadarEvent per reaction plus a HaltSignal on unexplained
+ * movement. Deterministic: driven by feed `ts` (data) and message order, never wall-clock.
+ *
+ * [LANE: Daniel] — this is a working first pass. Threshold calibration (T5), the signal
+ * taxonomy, and stabilization detection are his to refine/redesign. Everything tunable is
+ * already in `policy.toml [radar]`.
+ */
+
+interface ReactionCtx {
+  readonly event: RadarTriggerEvent;
+  readonly eventTs: number;
+  readonly minuteAtEvent: number;
+  readonly baseline: Record<string, number>;
+  firstReactionTs: number | undefined;
+  peakMagnitudeBps: number;
+  peakProbs: Record<string, number>;
+  lastProbs: Record<string, number>;
+}
+
+interface MarketState {
+  baseline: Record<string, number> | null;
+  latest: Record<string, number> | null;
+  reaction: ReactionCtx | null;
+}
+
+export interface RadarOutput {
+  readonly events: RadarEvent[];
+  readonly halts: HaltSignal[];
+}
+
+export class Radar {
+  private readonly markets = new Map<string, MarketState>();
+  private readonly latencySamples = new Map<string, number[]>();
+  private lastScore: ScoreMessage | null = null;
+  private readonly out: RadarOutput = { events: [], halts: [] };
+
+  private readonly cfg: ClassifyConfig;
+  constructor(private readonly policy: Policy) {
+    this.cfg = {
+      significantBps: policy.radar.significant_reaction_bps,
+      overreactionRetracePct: policy.radar.overreaction_retrace_pct,
+      drawWatchAfterMinute: policy.radar.draw_compression.watch_after_minute,
+      drawCompressionBps: policy.radar.draw_compression.compression_bps,
+      favoritePanicBps: policy.radar.significant_reaction_bps * 2,
+    };
+  }
+
+  /** Feed one ordered message; returns any new events/halts produced by it. */
+  observe(msg: FeedMessage): RadarOutput {
+    const before = { e: this.out.events.length, h: this.out.halts.length };
+    if (msg.kind === "score") this.onScore(msg);
+    else this.onOdds(msg);
+    return {
+      events: this.out.events.slice(before.e),
+      halts: this.out.halts.slice(before.h),
+    };
+  }
+
+  /** Finalize any reaction whose window has closed (call at end of a corpus run). */
+  flush(atTs: number): RadarOutput {
+    const before = { e: this.out.events.length, h: this.out.halts.length };
+    for (const [key, st] of this.markets) if (st.reaction) this.finalize(key, st, atTs);
+    return { events: this.out.events.slice(before.e), halts: this.out.halts.slice(before.h) };
+  }
+
+  get all(): RadarOutput {
+    return this.out;
+  }
+
+  private state(key: string): MarketState {
+    let st = this.markets.get(key);
+    if (!st) {
+      st = { baseline: null, latest: null, reaction: null };
+      this.markets.set(key, st);
+    }
+    return st;
+  }
+
+  private onScore(msg: ScoreMessage): void {
+    const ev = this.detectEvent(msg);
+    this.lastScore = msg;
+    if (ev.kind === "none") return;
+    // Open a reaction context on every market we already have a baseline for.
+    for (const [, st] of this.markets) {
+      if (!st.latest) continue;
+      st.baseline = { ...st.latest };
+      st.reaction = {
+        event: ev,
+        eventTs: msg.ts,
+        minuteAtEvent: msg.minute,
+        baseline: { ...st.latest },
+        firstReactionTs: undefined,
+        peakMagnitudeBps: 0,
+        peakProbs: { ...st.latest },
+        lastProbs: { ...st.latest },
+      };
+    }
+  }
+
+  private detectEvent(msg: ScoreMessage): RadarTriggerEvent {
+    const prev = this.lastScore;
+    const base = { msgId: msg.msgId, ts: msg.ts, minute: msg.minute };
+    if (!prev) return { kind: "none", ...base };
+    if (msg.homeScore > prev.homeScore || msg.awayScore > prev.awayScore)
+      return { kind: "goal", ...base };
+    if (msg.homeReds > prev.homeReds || msg.awayReds > prev.awayReds)
+      return { kind: "red_card", ...base };
+    return { kind: "none", ...base };
+  }
+
+  private onOdds(msg: OddsMessage): void {
+    const key = marketKeyString(msg.marketKey);
+    const st = this.state(key);
+    const probs = toNumberMap(msg.consensus);
+    st.latest = probs;
+    if (!st.baseline) {
+      st.baseline = { ...probs };
+      return;
+    }
+
+    const magVsBaseline = magnitude(st.baseline, probs);
+
+    if (st.reaction) {
+      const r = st.reaction;
+      const withinWindow = msg.ts - r.eventTs <= this.policy.radar.unexplained_window_ms;
+      if (!withinWindow) {
+        this.finalize(key, st, msg.ts);
+        // fall through: treat this obs as a fresh baseline comparison below
+      } else {
+        const magVsEvent = magnitude(r.baseline, probs);
+        if (r.firstReactionTs === undefined && magVsEvent >= this.cfg.significantBps) {
+          r.firstReactionTs = msg.ts;
+        }
+        if (magVsEvent > r.peakMagnitudeBps) {
+          r.peakMagnitudeBps = magVsEvent;
+          r.peakProbs = { ...probs };
+        }
+        r.lastProbs = { ...probs };
+        return;
+      }
+    }
+
+    // No open reaction: a significant move with no recent event is unexplained.
+    if (magVsBaseline >= this.cfg.significantBps) {
+      this.emitUnexplained(msg, key, magVsBaseline);
+      st.baseline = { ...probs };
+    }
+  }
+
+  private finalize(key: string, st: MarketState, atTs: number): void {
+    const r = st.reaction;
+    if (!r) return;
+    st.reaction = null;
+
+    const finalMag = magnitude(r.baseline, r.lastProbs);
+    const peakMove = r.peakMagnitudeBps;
+    const retraceFraction =
+      peakMove > 0 ? Math.max(0, Math.min(1, (peakMove - finalMag) / peakMove)) : 0;
+
+    const summary: ReactionSummary = {
+      marketKey: parseKey(key),
+      triggerEvent: r.event,
+      hadEvent: true,
+      minuteAtEvent: r.minuteAtEvent,
+      firstReactionTs: r.firstReactionTs,
+      reactionLatencyMs: r.firstReactionTs === undefined ? undefined : r.firstReactionTs - r.eventTs,
+      peakMagnitudeBps: peakMove,
+      finalMagnitudeBps: finalMag,
+      retraceFraction,
+      favoriteDropBps: favoriteDrop(r.baseline, r.lastProbs),
+      drawRiseBps: (r.lastProbs["DRAW"] ?? 0) - (r.baseline["DRAW"] ?? 0),
+    };
+
+    const samples = this.samplesFor(key);
+    const band = this.bandFor(key, samples);
+    const cls = classifyReaction(summary, band, this.cfg, samples);
+    if (summary.reactionLatencyMs !== undefined) samples.push(summary.reactionLatencyMs);
+
+    this.out.events.push({
+      marketKey: summary.marketKey,
+      triggerEvent: r.event,
+      eventTs: millis(r.eventTs),
+      ...(r.firstReactionTs !== undefined ? { firstReactionTs: millis(r.firstReactionTs) } : {}),
+      stabilizationTs: millis(atTs),
+      magnitudeBps: bps(Math.round(peakMove)),
+      ...(summary.reactionLatencyMs !== undefined ? { reactionLatencyMs: summary.reactionLatencyMs } : {}),
+      signalClass: cls.signalClass,
+      ...(cls.latencyPercentile !== undefined ? { latencyPercentile: cls.latencyPercentile } : {}),
+    });
+
+    st.baseline = { ...r.lastProbs };
+
+    if (cls.signalClass === "unexplained-movement") {
+      this.out.halts.push({
+        reason: "unexplained-movement",
+        marketKey: summary.marketKey,
+        triggerMsgId: r.event.msgId,
+        ts: millis(atTs),
+        detail: `unexplained ${Math.round(peakMove)}bps move on ${key}`,
+      });
+    }
+  }
+
+  private emitUnexplained(msg: OddsMessage, key: string, magBps: number): void {
+    this.out.events.push({
+      marketKey: msg.marketKey,
+      triggerEvent: { kind: "none", msgId: msg.msgId, ts: msg.ts, minute: this.lastScore?.minute ?? 0 },
+      eventTs: msg.ts,
+      magnitudeBps: bps(Math.round(magBps)),
+      signalClass: "unexplained-movement",
+    });
+    this.out.halts.push({
+      reason: "unexplained-movement",
+      marketKey: msg.marketKey,
+      triggerMsgId: msg.msgId,
+      ts: msg.ts,
+      detail: `unexplained ${Math.round(magBps)}bps move on ${key} with no event in ${this.policy.radar.unexplained_window_ms}ms`,
+    });
+  }
+
+  private samplesFor(key: string): number[] {
+    let s = this.latencySamples.get(key);
+    if (!s) {
+      s = [];
+      this.latencySamples.set(key, s);
+    }
+    return s;
+  }
+
+  private bandFor(key: string, samples: readonly number[]): LatencyBand {
+    const mk = parseKey(key);
+    const seedCfg = this.policy.radar.latency_bands_ms[mk.market] ?? {
+      fast_p: 20,
+      slow_p: 80,
+      fast_ms: 1500,
+      slow_ms: 9000,
+    };
+    const seed: LatencyBand = { fastMs: seedCfg.fast_ms, slowMs: seedCfg.slow_ms };
+    return computeBand(samples, seedCfg.fast_p, seedCfg.slow_p, seed);
+  }
+}
+
+function toNumberMap(v: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const k of Object.keys(v)) out[k] = v[k]!;
+  return out;
+}
+
+function magnitude(a: Record<string, number>, b: Record<string, number>): number {
+  let max = 0;
+  for (const k of Object.keys(b)) {
+    const d = Math.abs((b[k] ?? 0) - (a[k] ?? 0));
+    if (d > max) max = d;
+  }
+  return max;
+}
+
+/** Adverse drop of the pre-event favorite among HOME/AWAY (bps), else 0. */
+function favoriteDrop(baseline: Record<string, number>, latest: Record<string, number>): number {
+  const h = baseline["HOME"];
+  const a = baseline["AWAY"];
+  if (h === undefined || a === undefined) return 0;
+  const favKey = h >= a ? "HOME" : "AWAY";
+  const drop = (baseline[favKey] ?? 0) - (latest[favKey] ?? 0);
+  return Math.max(0, drop);
+}
+
+function parseKey(key: string): MarketKey {
+  if (key.startsWith("TOTALS@")) {
+    const line = parseFloat(key.slice("TOTALS@".length));
+    return { market: "TOTALS", lineTimes10: Math.round(line * 10) };
+  }
+  return { market: "1X2" };
+}

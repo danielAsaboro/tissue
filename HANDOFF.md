@@ -16,12 +16,12 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 | 0 Scaffold | ✅ done | monorepo, policy.toml, env, docs, dashboard data seam |
 | 1 TxLINE spine | ✅ done | auth chain, dual SSE client, normalizer, feed-health, corpus recorder + synthetic seed (13 ingest tests green) |
 | 2 Ground truth | ✅ done | GROUND-TRUTH.md — T1 fail documented, T2 consensus-granularity, T3 validate_odds semantics |
-| 3 Tissue core | ⏳ | pure pricing jewel |
-| 4 Latency Radar | ⏳ | scaffold — `[LANE: Daniel]` calibration |
+| 3 Tissue core | ✅ done | Poisson+DC, solve, in-play, fixed-point; 14 tests incl corpus property |
+| 4 Latency Radar | ✅ scaffold | event→reaction→stabilization, 7 classes, unexplained→HALT, percentile bands; 7 tests. `[LANE: Daniel]` calibration (T5) |
 | 5 Risk + Strategy | ⏳ | `[LANE: Tim]` |
 | 6 Exec | ⏳ | port + simulated book + real anchoring |
 | 7 Ledger + Grader | ⏳ | hash chain + replay-equality CI |
-| 8 Dashboard | ⏳ | headless on mock seam |
+| 8 Dashboard | ✅ scaffold | Next 16, 6 routes on mock seam, SIM badges, hash-verify; build+typecheck green |
 | 9 Replay lab | ⏳ | determinism confirm + REMAINING.md |
 
 ---
