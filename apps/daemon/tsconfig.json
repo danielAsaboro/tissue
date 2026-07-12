@@ -1,9 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "./src",
-    "outDir": "./dist",
+    "noEmit": true,
+    "declaration": false,
     "types": ["node"],
+    "baseUrl": ".",
     "paths": {
       "@tissue/shared": ["../../packages/shared/src/index.ts"]
     }

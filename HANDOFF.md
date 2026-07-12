@@ -14,8 +14,8 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 | Phase | Status | Notes |
 |------|--------|-------|
 | 0 Scaffold | ✅ done | monorepo, policy.toml, env, docs, dashboard data seam |
-| 1 TxLINE spine | ⏳ | auth chain + dual SSE + corpus recorder |
-| 2 Ground truth | ⏳ | GROUND-TRUTH.md — exec reality documented (see below) |
+| 1 TxLINE spine | ✅ done | auth chain, dual SSE client, normalizer, feed-health, corpus recorder + synthetic seed (13 ingest tests green) |
+| 2 Ground truth | ✅ done | GROUND-TRUTH.md — T1 fail documented, T2 consensus-granularity, T3 validate_odds semantics |
 | 3 Tissue core | ⏳ | pure pricing jewel |
 | 4 Latency Radar | ⏳ | scaffold — `[LANE: Daniel]` calibration |
 | 5 Risk + Strategy | ⏳ | `[LANE: Tim]` |
@@ -90,4 +90,4 @@ fall back to devnet-only pricing (noted here, does not block Phase 2+).
 - [ ] `validate_odds` return semantics (bool data vs revert-on-false) + CU cost — T3.
 
 ## Next
-Phase 1 — TxLINE auth chain + dual SSE clients + corpus recorder.
+Phase 3 — tissue pricing core (pure, cited, tested). Independent of exec; the unit-test jewel.
