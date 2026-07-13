@@ -29,6 +29,6 @@ export async function askAnalyst(question: string): Promise<AskResult> {
     if (!res.ok) return { error: `analyst service returned ${res.status}` };
     return (await res.json()) as AnalystAnswer;
   } catch {
-    return { error: `analyst offline at ${ANALYST_URL} — start it with \`pnpm --filter @tissue/analyst serve\`` };
+    return { error: `analyst offline at ${ANALYST_URL}. Start it with \`pnpm --filter @tissue/analyst serve\`` };
   }
 }

@@ -21,11 +21,9 @@ export function VerifyHashChainButton() {
         {pending ? "Verifying…" : "Verify hash chain"}
       </button>
       {result === null ? null : result.ok ? (
-        <span className="badge" style={{ color: "var(--accent)", borderColor: "var(--accent)" }}>
-          CHAIN OK
-        </span>
+        <span className="badge badge-positive">CHAIN OK</span>
       ) : (
-        <span className="badge badge-sim">
+        <span className="badge badge-danger">
           BROKEN{result.brokenAtSeq !== undefined ? ` @ seq ${result.brokenAtSeq}` : ""}
         </span>
       )}

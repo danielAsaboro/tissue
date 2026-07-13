@@ -16,7 +16,7 @@ export default async function OverviewPage() {
 
       <section className="panel">
         <h2>
-          Tissue vs market — {series.marketLabel} · {series.selectionLabel}
+          Tissue vs market · {series.marketLabel} · {series.selectionLabel}
         </h2>
         <TissueVsMarketChart series={series} />
       </section>

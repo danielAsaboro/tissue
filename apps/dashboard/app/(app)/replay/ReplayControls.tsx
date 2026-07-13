@@ -24,7 +24,7 @@ export function ReplayControls({ control }: { control: ReplayControl }) {
         {control.cursorMsgId ? ` · cursor ${control.cursorMsgId}` : ""}
       </p>
       <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-        Controls are a display stub in the headless skeleton — wiring to the replay
+        Controls are a display stub in the headless skeleton. Wiring to the replay
         engine lands with the live adapter.
       </p>
     </div>

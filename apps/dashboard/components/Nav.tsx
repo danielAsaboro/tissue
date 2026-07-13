@@ -1,7 +1,10 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 const ROUTES: readonly { readonly href: string; readonly label: string }[] = [
-  { href: "/", label: "Overview" },
+  { href: "/overview", label: "Overview" },
   { href: "/quotes", label: "Quotes" },
   { href: "/radar", label: "Radar" },
   { href: "/decisions", label: "Decisions" },
@@ -11,14 +14,23 @@ const ROUTES: readonly { readonly href: string; readonly label: string }[] = [
 ];
 
 export function Nav() {
+  const pathname = usePathname();
   return (
     <nav className="topnav">
-      <span className="brand">TISSUE</span>
-      {ROUTES.map((route) => (
-        <Link key={route.href} href={route.href}>
-          {route.label}
-        </Link>
-      ))}
+      <Link href="/" className="brand">
+        Tissue
+      </Link>
+      <div className="topnav-tabs">
+        {ROUTES.map((route) => {
+          const active = pathname === route.href || pathname.startsWith(route.href + "/");
+          return (
+            <Link key={route.href} href={route.href} className={active ? "active" : undefined}>
+              {route.label}
+            </Link>
+          );
+        })}
+      </div>
+      <span className="topnav-status">Devnet</span>
     </nav>
   );
 }

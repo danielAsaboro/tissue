@@ -7,7 +7,7 @@ export function DecisionFeed({ records }: { records: readonly DecisionRecord[] }
   if (records.length === 0) {
     return (
       <p className="empty">
-        No decisions recorded yet — the hash-chained feed fills as the desk acts.
+        No decisions recorded yet. The hash-chained feed fills as the desk acts.
       </p>
     );
   }
@@ -31,7 +31,7 @@ export function DecisionFeed({ records }: { records: readonly DecisionRecord[] }
             <td className="num">{record.seq}</td>
             <td>{formatClock(record.ts)}</td>
             <td>{record.action}</td>
-            <td>{record.radarClass ? <ClassBadge signalClass={record.radarClass} /> : <span className="muted">—</span>}</td>
+            <td>{record.radarClass ? <ClassBadge signalClass={record.radarClass} /> : <span className="muted">·</span>}</td>
             <td className="num">{formatBpsSigned(record.edgeBps)}</td>
             <td className="num">{record.intents.length}</td>
             <td>{record.simulated ? <SimBadge /> : <span className="muted">real</span>}</td>

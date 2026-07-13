@@ -30,7 +30,7 @@ for operations. Entry points: `pnpm --filter @tissue/daemon test:run`, `pnpm rep
 | 5 Risk + Strategy | ✅ done | edge/A-S quotes/Kelly + risk gates (sole exec authorizer); 12 tests. `[LANE: Tim]` |
 | 6 Exec | ✅ done | ExecPort + SimulatedBook (labeled, no self/external-vs-external match) + FeeLadder + real validate_odds PDA anchoring; 11 tests |
 | 7 Ledger + Grader | ✅ done | hash-chained ledger + engine loop + grader (CLV/Brier/latency/per-class/PnL); replay===ledger CI proven; 11 tests |
-| 8 Dashboard | ✅ scaffold | Next 16, 6 routes on mock seam, SIM badges, hash-verify; build+typecheck green |
+| 8 Dashboard | ✅ designed | Next 16, light 'Visitors' design system (design.md tokens) applied to all routes + a real landing page at /; SIM/hash-verify/halt intact; build green |
 | 9 Replay lab | ✅ done | replayCli (multi-speed) + main.ts; determinism confirmed; feed-gap chaos drill; 70 tests |
 | + Analyst layer | ✅ done | `apps/analyst`: read-only MCP (3 tools) + Groq→DGrid LLM + agent; dashboard "Ask Tissue"; 8 tests. **Additive, read-only, never near the decision path** |
 
@@ -92,6 +92,17 @@ triggering feed/network per decision. Mainnet activation needs real SOL; if reje
 fall back to devnet-only pricing (noted here, does not block Phase 2+).
 
 ---
+
+### D-009 — Frontend finishing pass (design system + landing page)
+Applied `internal/design.md` + `designtips.md` ("Visitors" white engineering blueprint) as one
+token set (CSS custom properties in `apps/dashboard/app/globals.css`): Carbon text, single
+Lavender `#918df6` accent, hairline Fog borders, pill controls, Inter via `next/font` (OpenRunde's
+named fallback, self-hosted). Status colors are functional, not chrome: Amber = caution/SIM/halt,
+Mint = positive/chain-ok, Ember = danger/broken. Routing split into a `(marketing)` group (real
+landing at `/`, 8 sections, real build numbers) and an `(app)` group (the dashboard: overview,
+quotes, radar, decisions, grade, replay, analyst) with its own nav+footer. The mock data seam and
+all working plumbing are untouched. Copy follows the PRD's instrument-calm voice with zero em
+dashes and none of the banned phrasing.
 
 ### D-008 — E2E failure-path hardening (3 real bugs found + fixed)
 Probing PRD §3 failure branches E2E surfaced three real bugs, now fixed + tested

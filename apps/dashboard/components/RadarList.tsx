@@ -6,7 +6,7 @@ export function RadarList({ events }: { events: readonly RadarEvent[] }) {
   if (events.length === 0) {
     return (
       <p className="empty">
-        No radar events yet — the latency radar publishes reactions as the corpus
+        No radar events yet. The latency radar publishes reactions as the corpus
         replays.
       </p>
     );

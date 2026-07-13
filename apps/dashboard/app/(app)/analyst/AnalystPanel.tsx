@@ -26,7 +26,7 @@ export function AnalystPanel() {
   return (
     <div className="analyst">
       <p className="muted">
-        Ask about the desk&apos;s already-decided, hash-chained ledger. The analyst narrates —
+        Ask about the desk&apos;s already-decided, hash-chained ledger. The analyst narrates.
         it reads the record read-only and <strong>never decides or places a trade</strong>.
       </p>
 
