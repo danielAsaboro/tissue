@@ -1,4 +1,8 @@
-import { DatabaseSync } from "node:sqlite";
+import { createRequire } from "node:module";
+
+// Load the `node:sqlite` built-in at runtime via require — bypasses bundler/test transforms
+// that don't yet recognize this newer Node builtin (vitest/Vite strip the `node:` prefix).
+const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
 /**
  * READ-ONLY database accessor for the analyst layer. The connection is opened with
@@ -44,7 +48,7 @@ export interface SignalClassStatRow {
 }
 
 export class ReadOnlyLedgerDb {
-  private readonly db: DatabaseSync;
+  private readonly db: InstanceType<typeof DatabaseSync>;
 
   constructor(path: string) {
     // The one line that makes this read-only by construction.
@@ -80,7 +84,7 @@ export class ReadOnlyLedgerDb {
 
   getSignalClassStats(signalClass: string | undefined, fixtureId: string | undefined): SignalClassStatRow[] {
     const where: string[] = [];
-    const params: unknown[] = [];
+    const params: string[] = [];
     if (signalClass) {
       where.push("re.signal_class = ?");
       params.push(signalClass);

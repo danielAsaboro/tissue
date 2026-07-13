@@ -22,5 +22,7 @@ jobs:
       - run: pnpm -r typecheck
       # pricing units, risk property tests, replay-equality CI, chaos drills
       - run: pnpm --filter @tissue/daemon test:run
+      # analyst layer: read-only-by-construction + statelessness + LLM fallback
+      - run: pnpm --filter @tissue/analyst test:run
       # determinism smoke: replay must reproduce an intact, deterministic ledger
       - run: pnpm --filter @tissue/daemon replay

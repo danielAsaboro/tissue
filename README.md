@@ -23,7 +23,9 @@ apps/daemon        TS + tsx daemon. Hard module boundaries (PRD §5):
   src/ledger         hash-chained decision records
   src/grader         CLV / Brier / PnL / latency / per-class hit rates
   src/replay         corpus replay = backtester + demo generator
-apps/dashboard     Next.js headless skeleton on a mock data seam
+apps/dashboard     Next.js headless skeleton on a mock data seam + "Ask Tissue" panel
+apps/analyst       read-only analyst: MCP (3 read tools) + Groq→DGrid LLM; narrates the
+                   ledger, never decides. Isolated from the decision path by construction.
 packages/shared    domain types (the cross-cutting contract)
 policy.toml        every tunable constant (PRD §4)
 ```

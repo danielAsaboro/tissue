@@ -7,6 +7,7 @@ const ROUTES: readonly { readonly href: string; readonly label: string }[] = [
   { href: "/decisions", label: "Decisions" },
   { href: "/grade", label: "Grade" },
   { href: "/replay", label: "Replay" },
+  { href: "/analyst", label: "Ask Tissue" },
 ];
 
 export function Nav() {

@@ -9,12 +9,13 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm --filter @tissue/daemon test",
+    "test": "pnpm --filter @tissue/daemon test:run && pnpm --filter @tissue/analyst test:run",
     "test:run": "pnpm --filter @tissue/daemon test:run",
     "typecheck": "pnpm -r typecheck",
     "daemon": "pnpm --filter @tissue/daemon start",
     "replay": "pnpm --filter @tissue/daemon replay",
-    "ci": "pnpm -r typecheck && pnpm --filter @tissue/daemon test:run"
+    "ci": "pnpm -r typecheck && pnpm --filter @tissue/daemon test:run && pnpm --filter @tissue/analyst test:run",
+    "analyst": "pnpm --filter @tissue/analyst serve"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

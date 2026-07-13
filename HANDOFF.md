@@ -32,6 +32,7 @@ for operations. Entry points: `pnpm --filter @tissue/daemon test:run`, `pnpm rep
 | 7 Ledger + Grader | ✅ done | hash-chained ledger + engine loop + grader (CLV/Brier/latency/per-class/PnL); replay===ledger CI proven; 11 tests |
 | 8 Dashboard | ✅ scaffold | Next 16, 6 routes on mock seam, SIM badges, hash-verify; build+typecheck green |
 | 9 Replay lab | ✅ done | replayCli (multi-speed) + main.ts; determinism confirmed; feed-gap chaos drill; 70 tests |
+| + Analyst layer | ✅ done | `apps/analyst`: read-only MCP (3 tools) + Groq→DGrid LLM + agent; dashboard "Ask Tissue"; 8 tests. **Additive, read-only, never near the decision path** |
 
 ---
 
@@ -91,6 +92,19 @@ triggering feed/network per decision. Mainnet activation needs real SOL; if reje
 fall back to devnet-only pricing (noted here, does not block Phase 2+).
 
 ---
+
+### D-007 — Analyst layer: read-only narration, isolated from decisioning
+`apps/analyst` is an ADDITIVE presentation layer over already-hash-chained ledger/grader
+outputs. It cannot touch `policy.toml`, `risk/`, `exec/`, or ledger writes — enforced by
+construction: the decision path writes a benign read-model projection (`*.analyst.json` →
+`corpus/analyst.db`), and the analyst opens that SQLite **read-only** (`{ readOnly: true }`),
+so any write throws at the SQLite layer (tested, not just "our tools don't write"). It exposes
+exactly three read tools over MCP (`get_recent_decisions`, `get_signal_class_stats`,
+`query_ledger_by_fixture`), driven by an LLM (Groq primary → DGrid fallback, per-query provider
+logged) in an in-memory MCP client↔server loop. Surface: dashboard `/analyst` ("Ask Tissue")
+→ server-action proxy → analyst HTTP service. Statelessness w.r.t. decisioning is tested:
+running it never mutates the ledger DB and it has no trade/execute tool, so no answer can ever
+produce a trade. Runs as its own process — literally cannot reach the SSE→…→exec path.
 
 ### D-006 — Live devnet activation DONE (V2 resolved)
 The full auth chain ran live against `txline-dev` with a funded wallet

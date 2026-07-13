@@ -234,3 +234,33 @@ button[aria-pressed="true"] {
   margin-right: 6px;
   vertical-align: middle;
 }
+
+/* Ask Tissue analyst panel */
+.analyst { max-width: 70ch; }
+.analyst input {
+  background: var(--panel, #10151c);
+  color: inherit;
+  border: 1px solid var(--border, #263040);
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+}
+.chip {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+.answer {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border, #263040);
+  border-radius: 6px;
+  background: var(--panel, #10151c);
+}
+.citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}

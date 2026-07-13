@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { loadPolicy } from "../config/policy.js";
 import { readCorpus, CORPUS_DIR } from "../ingest/corpus.js";
 import { generateSyntheticCorpus, SYNTHETIC_FIXTURE_ID } from "../ingest/synthetic.js";
@@ -63,6 +64,19 @@ async function main(): Promise<void> {
 
   const ledgerPath = join(CORPUS_DIR, `${fixtureId}.ledger.jsonl`);
   result.ledger.writeJsonl(ledgerPath);
+
+  // Analyst export — a benign read-model projection of already-hash-chained data. The
+  // read-only analyst layer (apps/analyst) materializes this; it never produces it.
+  const analystExport = {
+    fixtureId,
+    generatedAtMsgId: g.generatedAtMsgId,
+    decisions: result.ledger.all(),
+    radarEvents: result.radarEvents,
+    grade: g,
+    finalScore: result.finalScore,
+  };
+  const exportPath = join(CORPUS_DIR, `${fixtureId}.analyst.json`);
+  writeFileSync(exportPath, JSON.stringify(analystExport), "utf8");
 
   console.log("── flight recorder ─────────────────────────────");
   console.log(`  decisions      ${result.ledger.length}`);

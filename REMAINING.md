@@ -57,3 +57,7 @@ design/narrative pass. Split by PRD ownership so each owner can pick up cleanly.
   step to `packages/shared` before the live adapter uses its runtime exports.
 - **Corners/cards markets.** Flip on via `policy.toml markets_enabled` once the corpus
   supports them (encodings already in `soccerFeed.ts`).
+- **Analyst layer (read-only).** Wired end-to-end with a fake-LLM path in tests; a live demo
+  needs `GROQ_API_KEY` (+ optional `DGRID_*`). Run `pnpm replay` → `pnpm --filter @tissue/analyst
+  materialize` → `pnpm analyst`, then the dashboard `/analyst`. Future: richer tools (per-fixture
+  CLV drill, latency histograms), stream tokens to the panel. It stays read-only by construction.
