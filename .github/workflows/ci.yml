@@ -10,12 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # pnpm version comes from packageManager in package.json (do not also pin it here,
+      # or action-setup errors with ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24: node:sqlite (used by the analyst read-model) is unflagged here; on 22 it
+          # still needs --experimental-sqlite.
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # typecheck every package (shared + daemon + dashboard)
