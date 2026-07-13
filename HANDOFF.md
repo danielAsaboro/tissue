@@ -22,7 +22,7 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 | 6 Exec | ✅ done | ExecPort + SimulatedBook (labeled, no self/external-vs-external match) + FeeLadder + real validate_odds PDA anchoring; 11 tests |
 | 7 Ledger + Grader | ✅ done | hash-chained ledger + engine loop + grader (CLV/Brier/latency/per-class/PnL); replay===ledger CI proven; 11 tests |
 | 8 Dashboard | ✅ scaffold | Next 16, 6 routes on mock seam, SIM badges, hash-verify; build+typecheck green |
-| 9 Replay lab | ⏳ | determinism confirm + REMAINING.md |
+| 9 Replay lab | ✅ done | replayCli (multi-speed) + main.ts; determinism confirmed; feed-gap chaos drill; 69 tests |
 
 ---
 
@@ -90,4 +90,5 @@ fall back to devnet-only pricing (noted here, does not block Phase 2+).
 - [ ] `validate_odds` return semantics (bool data vs revert-on-false) + CU cost — T3.
 
 ## Next
-Phase 3 — tissue pricing core (pure, cited, tested). Independent of exec; the unit-test jewel.
+All phases built. Remaining polish split by lane in REMAINING.md. Live SSE capture + mainnet
+activation + real validate_odds submission are the open live-wiring items (need creds/SOL).

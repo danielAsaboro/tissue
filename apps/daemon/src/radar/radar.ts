@@ -136,15 +136,10 @@ export class Radar {
       return;
     }
 
-    const magVsBaseline = magnitude(st.baseline, probs);
-
     if (st.reaction) {
       const r = st.reaction;
       const withinWindow = msg.ts - r.eventTs <= this.policy.radar.unexplained_window_ms;
-      if (!withinWindow) {
-        this.finalize(key, st, msg.ts);
-        // fall through: treat this obs as a fresh baseline comparison below
-      } else {
+      if (withinWindow) {
         const magVsEvent = magnitude(r.baseline, probs);
         if (r.firstReactionTs === undefined && magVsEvent >= this.cfg.significantBps) {
           r.firstReactionTs = msg.ts;
@@ -156,11 +151,22 @@ export class Radar {
         r.lastProbs = { ...probs };
         return;
       }
+      // Window closed: finalize the reaction (this resets st.baseline to its last level),
+      // then evaluate THIS message against the fresh baseline below.
+      this.finalize(key, st, msg.ts);
     }
 
-    // No open reaction: a significant move with no recent event is unexplained.
-    if (magVsBaseline >= this.cfg.significantBps) {
+    // Measure against the current baseline (post-finalize if a reaction just closed).
+    const magVsBaseline = magnitude(st.baseline, probs);
+
+    // No open reaction: a LARGE move with no recent event is unexplained (adverse
+    // selection). Uses a higher threshold than reaction-significance so ordinary drift
+    // does not trip the survival instinct.
+    if (magVsBaseline >= this.policy.radar.unexplained_bps) {
       this.emitUnexplained(msg, key, magVsBaseline);
+      st.baseline = { ...probs };
+    } else if (magVsBaseline >= this.cfg.significantBps) {
+      // Meaningful but explained-enough drift: advance the baseline without halting.
       st.baseline = { ...probs };
     }
   }

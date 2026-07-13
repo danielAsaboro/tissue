@@ -12,7 +12,6 @@ import {
   bps,
 } from "@tissue/shared";
 import type { Policy } from "../config/policy.js";
-import { FeedHealthTracker } from "../ingest/feedHealth.js";
 import { hashPayload } from "../ledger/hash.js";
 import { Ledger } from "../ledger/ledger.js";
 import { MatchState } from "../state/matchState.js";
@@ -64,18 +63,30 @@ export interface ForecastPoint {
 
 const SIM_COUNTERPARTY = "sim-book";
 
+export interface EngineOptions {
+  /**
+   * Whether inter-message time gaps hard-HALT the desk (feed-death safety). Off by default:
+   * a sampled snapshot corpus legitimately has minute-scale gaps that are NOT feed death.
+   * The live daemon and the feed-gap chaos drill set this true. Staleness still widens
+   * spreads regardless.
+   */
+  readonly feedGapHalt?: boolean;
+}
+
 export function runEngine(
   corpus: readonly FeedMessage[],
   policy: Policy,
   network: Network = "devnet",
+  opts: EngineOptions = {},
 ): EngineResult {
+  const feedGapHalt = opts.feedGapHalt ?? false;
   const ledger = new Ledger();
   const radar = new Radar(policy);
   const book = new SimulatedBook();
   const exposure = new ExposureTracker(policy.risk.exposure_cap_per_fixture_units);
   const state = new MatchState(policy);
   const market = new Map<string, OddsMessage>();
-  const feed = new FeedHealthTracker(network, policy.feed.max_gap_ms, policy.feed.soft_stale_ms);
+  let prevTs: number | null = null;
 
   const radarEvents: RadarEvent[] = [];
   const halts: HaltSignal[] = [];
@@ -91,8 +102,11 @@ export function runEngine(
   let anchorTick = 0;
 
   for (const msg of corpus) {
-    feed.mark(msg.ts);
-    const health = feed.verdict(msg.ts);
+    // Inter-message staleness (data-driven, deterministic). Widens spreads always; only
+    // hard-halts when feedGapHalt is enabled (live / chaos drill).
+    const stalenessMs = prevTs == null ? 0 : Math.max(0, msg.ts - prevTs);
+    prevTs = msg.ts;
+    const feedGapMs = feedGapHalt ? stalenessMs : 0;
     const rout = radar.observe(msg);
     radarEvents.push(...rout.events);
     halts.push(...rout.halts);
@@ -109,7 +123,7 @@ export function runEngine(
     }
 
     if (!pricer) {
-      appendRecord(ledger, msg, network, state, exposure, health.gapMs, "NO_ACTION", undefined, undefined, bps(0), bps(0), 0, []);
+      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "NO_ACTION", undefined, undefined, bps(0), bps(0), 0, []);
       continue;
     }
 
@@ -126,12 +140,12 @@ export function runEngine(
     const radarClass = latestRadarClass(rout.events);
     const inventoryNorm = inventoryNorms(exposure, priced, policy);
     const proposals = proposeQuotes(
-      { priced, market, inventoryNorm, stalenessMs: health.gapMs, radarClass },
+      { priced, market, inventoryNorm, stalenessMs, radarClass },
       policy,
     );
     const risk = evaluateRisk(
       proposals,
-      { feedGapMs: health.gapMs, radarHalts: rout.halts, edges, exposure: exposure.snapshot(), killed },
+      { feedGapMs, radarHalts: rout.halts, edges, exposure: exposure.snapshot(), killed },
       policy,
     );
     killed = killed || risk.killed;
@@ -180,7 +194,7 @@ export function runEngine(
       network,
       state,
       exposure,
-      health.gapMs,
+      stalenessMs,
       action,
       radarClass,
       risk.halts[0]?.reason,

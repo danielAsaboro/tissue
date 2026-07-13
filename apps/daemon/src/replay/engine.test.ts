@@ -91,6 +91,22 @@ describe("replay(corpus) === ledger — the CI backbone", () => {
   });
 });
 
+describe("chaos — feed-gap drill (PRD §9)", () => {
+  it("hard-halts and cancels all intents when a feed gap exceeds max_gap_ms", () => {
+    // Build a realistic-cadence corpus (messages ~2s apart) then inject a large gap.
+    const corpus = generateSyntheticCorpus();
+    // Under feedGapHalt, the synthetic corpus's minute-scale gaps themselves exceed
+    // max_gap_ms, so the desk should register feed-gap HALT decisions.
+    const withHalt = runEngine(corpus, policy, "devnet", { feedGapHalt: true });
+    const haltRecords = withHalt.ledger.all().filter((r) => r.haltReason === "feed-gap");
+    expect(haltRecords.length).toBeGreaterThan(0);
+
+    // Without the flag (default backtest of sampled data), sparsity does NOT halt.
+    const noHalt = runEngine(corpus, policy, "devnet", { feedGapHalt: false });
+    expect(noHalt.ledger.all().some((r) => r.haltReason === "feed-gap")).toBe(false);
+  });
+});
+
 describe("grade sheet", () => {
   it("assembles CLV, Brier, latency, per-class, and SIMULATED PnL", () => {
     const corpus = generateSyntheticCorpus();

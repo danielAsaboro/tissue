@@ -95,6 +95,10 @@ soft_stale_ms = 4000
 unexplained_window_ms = 20000
 # A price reaction counts as "significant" at or above this magnitude (bps of prob).
 significant_reaction_bps = 100
+# An UNEXPLAINED move (no event in the trailing window) must be at least this large to fire
+# the adverse-selection HALT. Deliberately higher than significant_reaction_bps so ordinary
+# market drift does not trip the survival instinct. [LANE: Daniel] T5 calibration.
+unexplained_bps = 350
 # Stabilization: reaction considered stable once move rate drops below this (bps/sec)
 # sustained for stabilization_hold_ms.
 stabilization_rate_bps_per_sec = 15

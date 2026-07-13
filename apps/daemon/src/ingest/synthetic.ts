@@ -92,7 +92,8 @@ const ODDS_POINTS: OddsPoint[] = [
   { min: 78, sec: 6, homeScore: 1, awayScore: 1, market: { home: 0.52, draw: 0.34, away: 0.14, over: 0.68, under: 0.32 }, inRunning: true },
   { min: 78, sec: 12, homeScore: 1, awayScore: 1, market: { home: 0.42, draw: 0.4, away: 0.18, over: 0.8, under: 0.2 }, inRunning: true },
   { min: 78, sec: 18, homeScore: 1, awayScore: 1, market: { home: 0.62, draw: 0.26, away: 0.12, over: 0.7, under: 0.3 }, inRunning: true },
-  { min: 88, homeScore: 1, awayScore: 1, market: { home: 0.56, draw: 0.33, away: 0.11, over: 0.72, under: 0.28 }, inRunning: true },
+  // Settle near the retrace level (small drift) — not a fresh unexplained move.
+  { min: 88, homeScore: 1, awayScore: 1, market: { home: 0.61, draw: 0.27, away: 0.12, over: 0.71, under: 0.29 }, inRunning: true },
 ];
 
 let SEQ = 0;

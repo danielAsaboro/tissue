@@ -65,6 +65,7 @@ export interface Policy {
   readonly radar: {
     readonly unexplained_window_ms: number;
     readonly significant_reaction_bps: number;
+    readonly unexplained_bps: number;
     readonly stabilization_rate_bps_per_sec: number;
     readonly stabilization_hold_ms: number;
     readonly overreaction_retrace_pct: number;
