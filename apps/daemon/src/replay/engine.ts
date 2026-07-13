@@ -17,11 +17,15 @@ import { Ledger } from "../ledger/ledger.js";
 import { MatchState } from "../state/matchState.js";
 import { TissuePricer } from "../tissue/index.js";
 import { Radar } from "../radar/radar.js";
-import { computeEdges, proposeQuotes } from "../strategy/strategy.js";
+import { computeEdges, proposeQuotes, type QuoteProposal } from "../strategy/strategy.js";
 import { evaluateRisk } from "../risk/gates.js";
 import { ExposureTracker } from "../risk/exposure.js";
 import { SimulatedBook } from "../exec/simulatedBook.js";
+import { FeeLadder } from "../exec/feeLadder.js";
 import { prepareOddsAnchor, type PreparedAnchor } from "../exec/anchor.js";
+
+/** Injected on-chain submission outcome per market — models devnet congestion / tx failure. */
+export type SubmitOutcome = "ok" | "congested" | "failed";
 
 /**
  * The deterministic decision loop (PRD §3). Both the live daemon and the replay lab run
@@ -51,6 +55,8 @@ export interface EngineResult {
   readonly quotes: QuoteRecord[];
   readonly forecasts: ForecastPoint[];
   readonly finalScore: { home: number; away: number };
+  /** True if the match was abandoned/cancelled — positions voided, not settled on score. */
+  readonly voided: boolean;
   readonly closingMarket: Map<string, OddsMessage>;
 }
 
@@ -77,6 +83,14 @@ export interface EngineOptions {
    * (operator restart only, PRD §5). Never un-kills once true.
    */
   readonly initialKilled?: boolean;
+  /**
+   * Fault injector for the exec submission path (default: always "ok"). Returns the on-chain
+   * outcome for a market's posts this tick. "congested" escalates the priority-fee ladder and
+   * skips the tick (retry next at a higher fee); ladder exhaustion HALTs the market. "failed"
+   * counts toward tx_max_retries; exceeding it HALTs the market. Models PRD §3 tx-failure /
+   * devnet-congestion branches without a real chain.
+   */
+  readonly submitFault?: (marketKey: string, msgId: string) => SubmitOutcome;
 }
 
 export function runEngine(
@@ -102,10 +116,13 @@ export function runEngine(
 
   let pricer: TissuePricer | null = null;
   let killed = opts.initialKilled ?? false;
+  let voided = false;
   let openingHome: OddsMessage | null = null;
   let openingTotals: OddsMessage | null = null;
   const fixtureId = corpus.find((m) => m)?.fixtureId ?? "UNKNOWN";
   let anchorTick = 0;
+  const ladders = new Map<string, FeeLadder>();
+  const txRetries = new Map<string, number>();
 
   for (const msg of corpus) {
     // Inter-message staleness (data-driven, deterministic). Widens spreads always; only
@@ -119,13 +136,24 @@ export function runEngine(
 
     if (msg.kind === "score") {
       state.applyScore(msg);
-    } else {
+      if (msg.isVoid) voided = true;
+    } else if (!voided) {
       market.set(marketKeyString(msg.marketKey), msg);
       if (msg.marketKey.market === "1X2" && !openingHome) openingHome = msg;
       if (msg.marketKey.market === "TOTALS" && !openingTotals) openingTotals = msg;
       if (!pricer && openingHome) pricer = buildPricer(openingHome, openingTotals, policy);
       simulateExternalFlow(book, msg, exposure, quotes);
       if (shouldAnchor(policy, anchorTick++)) anchors.push(prepareOddsAnchor(network, msg.ts));
+    }
+
+    // Abandoned/cancelled match ⇒ VOID: cancel all, stop quoting, do NOT settle on the score.
+    if (voided) {
+      for (const i of book.openIntents()) {
+        const c = book.cancelIntent(i.id);
+        if (c) exposure.upsertOpen(c);
+      }
+      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "HALT", undefined, "match-void", bps(0), bps(0), 0, []);
+      continue;
     }
 
     if (!pricer) {
@@ -174,26 +202,55 @@ export function runEngine(
       }
     }
 
+    // Post approved intents, routed through the exec submission path (fee-ladder aware).
     const posted: Intent[] = [];
+    const execHaltReasons: string[] = [];
+    const byMarket = new Map<string, QuoteProposal[]>();
     for (const p of risk.approved) {
-      const intent = book.postIntent(p, fixtureId, msg.msgId);
-      exposure.upsertOpen(intent);
-      posted.push(intent);
-      quotes.push({
-        msgId: msg.msgId,
-        ts: msg.ts,
-        marketKey: marketKeyString(p.marketKey),
-        selection: p.selection,
-        side: p.side,
-        quoteMilliOdds: p.priceMilliOdds,
-        quoteProbBps: probBpsFromMilliOdds(p.priceMilliOdds),
-        radarClass: p.radarClass,
-        matched: false,
-      });
+      const k = marketKeyString(p.marketKey);
+      const arr = byMarket.get(k);
+      if (arr) arr.push(p);
+      else byMarket.set(k, [p]);
+    }
+    for (const [k, props] of byMarket) {
+      const outcome: SubmitOutcome = opts.submitFault ? opts.submitFault(k, msg.msgId) : "ok";
+      if (outcome === "ok") {
+        ladders.get(k)?.reset();
+        txRetries.set(k, 0);
+        for (const p of props) {
+          const intent = book.postIntent(p, fixtureId, msg.msgId);
+          exposure.upsertOpen(intent);
+          posted.push(intent);
+          quotes.push({
+            msgId: msg.msgId, ts: msg.ts, marketKey: k, selection: p.selection, side: p.side,
+            quoteMilliOdds: p.priceMilliOdds, quoteProbBps: probBpsFromMilliOdds(p.priceMilliOdds),
+            radarClass: p.radarClass, matched: false,
+          });
+        }
+      } else if (outcome === "congested") {
+        let ladder = ladders.get(k);
+        if (!ladder) {
+          ladder = new FeeLadder(policy.exec.priority_fee_ladder_microlamports, policy.exec.tx_max_retries);
+          ladders.set(k, ladder);
+        }
+        if (ladder.escalate() === null) {
+          cancelMarketIntents(book, exposure, k);
+          execHaltReasons.push("congestion");
+        }
+        // else: skip posting this tick — retry next tick at the higher fee
+      } else {
+        const n = (txRetries.get(k) ?? 0) + 1;
+        txRetries.set(k, n);
+        if (n > policy.exec.tx_max_retries) {
+          cancelMarketIntents(book, exposure, k);
+          execHaltReasons.push("tx-failure");
+        }
+      }
     }
 
     const top = topEdge(edges);
-    const action = hasAllHalt || marketHaltKeys.size > 0 ? "HALT" : posted.length > 0 ? "POST" : "NO_ACTION";
+    const halted = hasAllHalt || marketHaltKeys.size > 0 || execHaltReasons.length > 0;
+    const action = halted ? "HALT" : posted.length > 0 ? "POST" : "NO_ACTION";
     appendRecord(
       ledger,
       msg,
@@ -203,7 +260,7 @@ export function runEngine(
       stalenessMs,
       action,
       radarClass,
-      risk.halts[0]?.reason,
+      risk.halts[0]?.reason ?? execHaltReasons[0],
       top ? top.tissueProb : bps(0),
       top ? top.marketProb : bps(0),
       top ? top.edgeBps : 0,
@@ -211,12 +268,21 @@ export function runEngine(
     );
   }
 
+  // Flush any open Radar reaction so its event (e.g. a trailing goal/correction reaction) is
+  // captured — otherwise the last reaction of the match is silently lost.
+  const flushOut = radar.flush((prevTs ?? 0) + policy.radar.unexplained_window_ms + 1);
+  radarEvents.push(...flushOut.events);
+  halts.push(...flushOut.halts);
+
   const finalScore = lastScore(corpus);
-  const settlement = book.settle(finalScore.home, finalScore.away);
+  // Void matches never settle on the (phantom) score — positions are refunded, PnL is 0.
+  const settlement = voided
+    ? { perIntentPnlUnits: {}, totalPnlUnits: 0, simulated: true }
+    : book.settle(finalScore.home, finalScore.away);
   exposure.onSettle(settlement.totalPnlUnits);
   markMatchedQuotes(book, quotes);
 
-  return { fixtureId, ledger, radarEvents, halts, anchors, book, quotes, forecasts, finalScore, closingMarket: market };
+  return { fixtureId, ledger, radarEvents, halts, anchors, book, quotes, forecasts, finalScore, voided, closingMarket: market };
 }
 
 function buildPricer(home: OddsMessage, totals: OddsMessage | null, policy: Policy): TissuePricer {
@@ -292,6 +358,16 @@ function simulateExternalFlow(
       sizeUnits: Math.max(1, Math.floor(remaining / 2)),
     });
     for (const f of fills) exposure.onFill({ ...intent, side: f.tissueSide }, f.sizeUnits);
+  }
+}
+
+/** Cancel every open Tissue intent on one market (used by exec/congestion halts). */
+function cancelMarketIntents(book: SimulatedBook, exposure: ExposureTracker, marketKey: string): void {
+  for (const i of book.openIntents()) {
+    if (marketKeyString(i.marketKey) === marketKey) {
+      const c = book.cancelIntent(i.id);
+      if (c) exposure.upsertOpen(c);
+    }
   }
 }
 

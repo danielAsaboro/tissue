@@ -37,6 +37,8 @@ export interface ScoreMessage extends FeedEnvelope {
   /** Period / game phase label as reported by the feed, if any. */
   readonly phase?: string;
   readonly isFinal: boolean;
+  /** Abandoned/cancelled: the match did not complete → positions VOID, never settle on score. */
+  readonly isVoid: boolean;
 }
 
 /** A de-margined consensus odds update from the odds stream. */

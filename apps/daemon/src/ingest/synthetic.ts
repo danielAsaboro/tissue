@@ -114,6 +114,7 @@ function scoreMsg(p: ScorePoint, fixtureId: string): ScoreMessage {
     possession: { home: p.pressureHome ?? "none", away: p.pressureAway ?? "none" },
     phase: String(p.status),
     isFinal: Boolean(p.isFinal),
+    isVoid: false,
   };
 }
 

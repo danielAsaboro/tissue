@@ -16,6 +16,7 @@ import {
   PHASE_START_MINUTE,
   STAT_KEY,
   isFinalStatus,
+  isVoidStatus,
   type FreeKickType,
 } from "./soccerFeed.js";
 
@@ -113,6 +114,7 @@ export function normalizeScores(raw: RawScores, network: Network): ScoreMessage 
     possession: { home, away },
     phase: String(statusId),
     isFinal: isFinalStatus(statusId),
+    isVoid: isVoidStatus(statusId),
   };
 }
 

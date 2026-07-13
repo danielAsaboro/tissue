@@ -93,6 +93,20 @@ fall back to devnet-only pricing (noted here, does not block Phase 2+).
 
 ---
 
+### D-008 — E2E failure-path hardening (3 real bugs found + fixed)
+Probing PRD §3 failure branches E2E surfaced three real bugs, now fixed + tested
+(`replay/failures.test.ts`, 6 E2E tests):
+1. **Abandoned/cancelled match** settled PnL on a phantom score. Fixed: `isVoid` flows
+   score→engine; a void match HALTs, cancels all, and books ZERO PnL (never settles on score).
+2. **VAR score reversal** fired a FALSE unexplained-movement HALT (Radar ignored score
+   decreases). Fixed: a score decrease is now a `score_correction` event that explains the move.
+3. **Fee ladder was orphaned** (unit-only). Fixed: exec now routes posts through a fault hook —
+   `submitFault` "congested" escalates the fee ladder → market halt on exhaustion; "failed"
+   → market halt after `tx_max_retries`. Also fixed: the engine now flushes the Radar at end
+   (the last reaction was being silently dropped).
+E2E-covered failure paths: feed-gap HALT, unexplained HALT, drawdown-kill (recovery),
+model-divergence pull+flag, abandoned-void, VAR-reversal, tx-failure, congestion, tamper.
+
 ### D-007 — Analyst layer: read-only narration, isolated from decisioning
 `apps/analyst` is an ADDITIVE presentation layer over already-hash-chained ledger/grader
 outputs. It cannot touch `policy.toml`, `risk/`, `exec/`, or ledger writes — enforced by

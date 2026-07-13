@@ -23,7 +23,10 @@ export function grade(result: EngineResult, policy: Policy): GradeSheet {
   const latency = buildLatency(result);
   const perClass = buildPerClass(clvSamples);
   const fills = result.book.allFills();
-  const settlement = result.book.settle(result.finalScore.home, result.finalScore.away);
+  // A voided (abandoned/cancelled) match never settles on the score — realized PnL is 0.
+  const realizedUnits = result.voided
+    ? 0
+    : result.book.settle(result.finalScore.home, result.finalScore.away).totalPnlUnits;
 
   return {
     generatedAtMsgId: result.ledger.all().at(-1)?.triggerMsgId ?? "",
@@ -32,7 +35,7 @@ export function grade(result: EngineResult, policy: Policy): GradeSheet {
     latency,
     perClass,
     pnl: {
-      realizedUnits: settlement.totalPnlUnits,
+      realizedUnits,
       matchedIntents: new Set(fills.map((f) => f.tissueIntentId)).size,
       settlementTxSigs: [], // simulated book — no on-chain settlement tx
       simulated: true,

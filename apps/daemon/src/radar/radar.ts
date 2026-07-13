@@ -121,6 +121,10 @@ export class Radar {
     if (!prev) return { kind: "none", ...base };
     if (msg.homeScore > prev.homeScore || msg.awayScore > prev.awayScore)
       return { kind: "goal", ...base };
+    // A score DECREASE is a VAR/correction reversal — a real, explaining event. Without this
+    // the market's snap-back would be misread as unexplained-movement and falsely HALT.
+    if (msg.homeScore < prev.homeScore || msg.awayScore < prev.awayScore)
+      return { kind: "score_correction", ...base };
     if (msg.homeReds > prev.homeReds || msg.awayReds > prev.awayReds)
       return { kind: "red_card", ...base };
     return { kind: "none", ...base };

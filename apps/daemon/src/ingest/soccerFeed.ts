@@ -73,3 +73,8 @@ export function isFinalStatus(statusId: number): boolean {
     statusId === STATUS.FPE
   );
 }
+
+/** Abandoned or cancelled — the match did not complete, so trades VOID (no settle on score). */
+export function isVoidStatus(statusId: number): boolean {
+  return statusId === STATUS.ABANDONED || statusId === STATUS.CANCELLED;
+}
