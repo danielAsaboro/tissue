@@ -9,6 +9,15 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 
 ---
 
+## TL;DR
+
+All 10 phases have a tested first pass. **69 tests green**; all 3 packages typecheck;
+`replay(corpus) === ledger` asserted in CI. The T1 gate failed (no on-chain intent-book) and
+was resolved by decision **D-001** (port + honest adapter): real `validate_odds` anchoring +
+an explicitly-**simulated** maker book behind a swap-in boundary. Read `GROUND-TRUTH.md` and
+`feedback.md` F-001 for the evidence, `REMAINING.md` for what's left (by lane), `RUNBOOK.md`
+for operations. Entry points: `pnpm --filter @tissue/daemon test:run`, `pnpm replay`.
+
 ## Current state
 
 | Phase | Status | Notes |
