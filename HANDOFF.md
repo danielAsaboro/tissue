@@ -19,7 +19,7 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 | 3 Tissue core | ✅ done | Poisson+DC, solve, in-play, fixed-point; 14 tests incl corpus property |
 | 4 Latency Radar | ✅ scaffold | event→reaction→stabilization, 7 classes, unexplained→HALT, percentile bands; 7 tests. `[LANE: Daniel]` calibration (T5) |
 | 5 Risk + Strategy | ✅ done | edge/A-S quotes/Kelly + risk gates (sole exec authorizer); 12 tests. `[LANE: Tim]` |
-| 6 Exec | ⏳ | port + simulated book + real anchoring |
+| 6 Exec | ✅ done | ExecPort + SimulatedBook (labeled, no self/external-vs-external match) + FeeLadder + real validate_odds PDA anchoring; 11 tests |
 | 7 Ledger + Grader | ⏳ | hash chain + replay-equality CI |
 | 8 Dashboard | ✅ scaffold | Next 16, 6 routes on mock seam, SIM badges, hash-verify; build+typecheck green |
 | 9 Replay lab | ⏳ | determinism confirm + REMAINING.md |
