@@ -11,7 +11,7 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 
 ## TL;DR
 
-All 10 phases have a tested first pass. **69 tests green**; all 3 packages typecheck;
+All 10 phases have a tested first pass. **70 tests green**; all 3 packages typecheck;
 `replay(corpus) === ledger` asserted in CI. The T1 gate failed (no on-chain intent-book) and
 was resolved by decision **D-001** (port + honest adapter): real `validate_odds` anchoring +
 an explicitly-**simulated** maker book behind a swap-in boundary. Read `GROUND-TRUTH.md` and
@@ -31,7 +31,7 @@ for operations. Entry points: `pnpm --filter @tissue/daemon test:run`, `pnpm rep
 | 6 Exec | ✅ done | ExecPort + SimulatedBook (labeled, no self/external-vs-external match) + FeeLadder + real validate_odds PDA anchoring; 11 tests |
 | 7 Ledger + Grader | ✅ done | hash-chained ledger + engine loop + grader (CLV/Brier/latency/per-class/PnL); replay===ledger CI proven; 11 tests |
 | 8 Dashboard | ✅ scaffold | Next 16, 6 routes on mock seam, SIM badges, hash-verify; build+typecheck green |
-| 9 Replay lab | ✅ done | replayCli (multi-speed) + main.ts; determinism confirmed; feed-gap chaos drill; 69 tests |
+| 9 Replay lab | ✅ done | replayCli (multi-speed) + main.ts; determinism confirmed; feed-gap chaos drill; 70 tests |
 
 ---
 
