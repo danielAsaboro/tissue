@@ -92,11 +92,23 @@ fall back to devnet-only pricing (noted here, does not block Phase 2+).
 
 ---
 
+### D-006 — Live devnet activation DONE (V2 resolved)
+The full auth chain ran live against `txline-dev` with a funded wallet
+(`DK2H6r7djsYd4KJQywCgnPjn94552QNJUVFmtJWyzLpJ`, devnet): guest JWT → on-chain `subscribe(1,4)`
+(confirmed) → `/token/activate` → real `X-Api-Token`. Real corpus `corpus/18209181.jsonl`
+(FRA 2-0 MAR, 40 real scores + 43 real O/U odds) seeded via `apps/daemon/scripts/liveActivate.ts`.
+Cached creds live in `apps/daemon/.keys/apitoken.json` (gitignored). Findings in feedback.md
+F-002. De-vig validated against real StablePrice `Pct` (`devig.test.ts` REAL CAPTURE).
+Mainnet level-12 still needs real SOL → devnet-only fallback stands (tested, D-001/V2).
+
 ## Open questions
+- [ ] **Free tier has no 1X2 market** (only O/U + Asian Handicap) — tissue's 1X2 price can't
+      be validated against a real 1X2 line on level 1. Options: derive 1X2 from AH+O/U, use a
+      paid tier, or demo totals-real + 1X2-synthetic. Affects the real-data demo. (feedback F-002)
 - [ ] Real orderbook IDL + `/api/trading/*` endpoints from sponsor (F-001) — swap into
       `exec/` when published.
-- [ ] Completed World Cup fixture id for corpus seed (Phase 1) — pending schedule lookup.
-- [ ] `validate_odds` return semantics (bool data vs revert-on-false) + CU cost — T3.
+- [ ] `validate_odds` return semantics (bool data vs revert-on-false) + CU cost — T3
+      (now unblocked: we have an activated token to fetch real proofs).
 
 ## Next
 All phases built. Remaining polish split by lane in REMAINING.md. Live SSE capture + mainnet

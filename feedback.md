@@ -46,4 +46,33 @@ reconcile the README `settleTrade` reference with the shipped devnet IDL.
 
 ---
 
+## F-002 — Live devnet activation works; four real-integration surprises
+**Phase:** 1/2 (live wiring) · **Severity:** medium · **Date:** 2026-07-13
+
+Ran the full auth chain live against `txline-dev` with a funded devnet wallet
+(`DK2H6r7djsYd4KJQywCgnPjn94552QNJUVFmtJWyzLpJ`): guest JWT → on-chain `subscribe(1, 4)`
+(tx confirmed) → `/api/token/activate` → real `X-Api-Token`, then seeded a real corpus for
+fixture `18209181` (FRA 2-0 MAR). Four things the docs/IDL did not prepare us for:
+
+1. **`/token/activate` returns the token as PLAIN TEXT** (e.g. `txoracle_api_…`), not JSON.
+   `res.json()` throws; parse defensively (text → try JSON → fall back to raw string).
+2. **`odds/snapshot/{id}` returns 0 rows without `?asOf=`** — a bare snapshot is the *current*
+   book, which is empty once the match/market has closed. Must pass `asOf` inside the live
+   window (we sample across the in-play ts range).
+3. **The free World Cup tier (level 1) carries NO 1X2 / match-odds market** — only
+   `OVERUNDER_PARTICIPANT_GOALS` (totals, many lines) and `ASIANHANDICAP_PARTICIPANT_GOALS`.
+   This blocks validating tissue's 1X2 price against a real 1X2 line on the free tier (see
+   HANDOFF open question). Totals validate fine.
+4. **Snapshot score records lack a live `Minute`** — only status/period — so in-play minute
+   resolves to phase-start (0/45) via our fallback. A live SSE stream may carry finer timing;
+   TBD when we record live.
+
+Bonus confirmations: the `Odds` payload carries a **`Pct`** field (de-margined probability %,
+e.g. `["57.504","42.481"]`) and `Bookmaker: "TXLineStablePriceDemargined"` — both hard-confirm
+D-005 (de-margined consensus). Our de-vig reproduces the official `Pct` to <2 bps (pinned in
+`devig.test.ts` REAL CAPTURE).
+
+**Ask to sponsor:** document the plain-text activation response, the `asOf` requirement on
+odds snapshots, the per-tier market bundle (which tiers include 1X2?), and the `Pct` field.
+
 <!-- Append new entries above this line as friction surfaces during live wiring. -->

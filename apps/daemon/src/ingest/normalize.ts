@@ -183,6 +183,10 @@ export function normalizeOdds(raw: RawOdds, network: Network): OddsMessage | nul
   }
   const selections = Object.keys(impliedByName);
   if (selections.length === 0) return null;
+  // Require a COMPLETE selection set — real feeds carry partial/degenerate rows (e.g. a lone
+  // "draw" leg) that must not become a one-sided market. (Hardened against live data.)
+  if (marketKey.market === "1X2" && !(selections.includes("HOME") && selections.includes("AWAY"))) return null;
+  if (marketKey.market === "TOTALS" && !(selections.includes("OVER") && selections.includes("UNDER"))) return null;
 
   // De-vig defensively (normalize implied probs to sum to 1). Idempotent on an already
   // de-margined StablePrice input; corrects any residual overround (GROUND-TRUTH T2).

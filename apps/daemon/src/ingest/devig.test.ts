@@ -48,6 +48,19 @@ describe("V1 — odds de-vig is single-pass and idempotent on de-margined input"
     }
   });
 
+  it("REAL CAPTURE: our de-vig reproduces TxLINE's official StablePrice Pct (FRA 2-0 MAR)", () => {
+    // Captured live from txline-dev on 2026-07-09 (fixture 18209181, full-match O/U 2.5):
+    //   Bookmaker "TXLineStablePriceDemargined", Prices [1739, 2354], Pct ["57.504","42.481"].
+    // The Bookmaker name and the ~100%-summing Pct both confirm D-005 (de-margined consensus).
+    const m = asOdds(normalizeOdds(
+      { fixture_id: 18209181, super_odds_type: "OVERUNDER_PARTICIPANT_GOALS", market_parameters: "line=2.5", price_names: ["over", "under"], prices: [1739, 2354], in_running: true },
+      "devnet",
+    ));
+    // Our de-vig lands within 2 bps of the official de-margined Pct — no double removal.
+    expect(Math.abs(m.consensus["OVER"]! - 5750)).toBeLessThanOrEqual(2); // official 57.504%
+    expect(Math.abs(m.consensus["UNDER"]! - 4248)).toBeLessThanOrEqual(2); // official 42.481%
+  });
+
   it("removes margin exactly once on a margined book (overround > 1)", () => {
     // Margined: p ≈ [0.526, 0.294, 0.250], overround ≈ 1.070 (7% vig).
     const margined = [1900, 3400, 4000];

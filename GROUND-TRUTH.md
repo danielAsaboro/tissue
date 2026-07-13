@@ -74,8 +74,14 @@ CLV grades every quote against the close whether matched or not.
   `["token_treasury_v2"]`), `tokenProgram = TOKEN_2022_PROGRAM_ID`, `associatedTokenProgram`,
   `systemProgram`.
 
-Implemented in `apps/daemon/src/ingest/txlineAuth.ts` (JWT + activate) — the `subscribe`
-CPI is the one live step gated on a funded devnet wallet.
+Implemented in `apps/daemon/src/ingest/txlineAuth.ts` (JWT + activate). The `subscribe` CPI
+is in `apps/daemon/scripts/liveActivate.ts`.
+
+**✅ CONFIRMED LIVE (2026-07-13):** the full chain ran end-to-end on devnet with a funded
+wallet — `subscribe(1,4)` tx confirmed, real `X-Api-Token` acquired. Corrections vs. docs
+(feedback.md F-002): `/token/activate` returns the token as **plain text**, not JSON; odds
+snapshots need **`?asOf=`** in the live window (bare snapshot is empty post-match); the free
+tier (level 1) market bundle is **O/U + Asian Handicap, NO 1X2**.
 
 ---
 
@@ -87,14 +93,14 @@ CPI is the one live step gated on a funded devnet wallet.
   (~3s), renew JWT on 401/403, resume via `Last-Event-ID`. Heartbeats arrive as SSE comment
   lines (`:`), no documented cadence. Compression: `Accept-Encoding: deflate`/`gzip`.
 
-### Granularity — de-margined **CONSENSUS**, not per-book
+### Granularity — de-margined **CONSENSUS**, not per-book (✅ confirmed on real data)
 The odds channel is TxODDS **StablePrice**: "fully de-margined stable odds (effectively,
-probabilities)" (`README.md:62`; `documentation/odds/overview.mdx:6,8,23`). The on-chain
-`Odds` struct carries `bookmaker: string` + `bookmaker_id: i32` **slots**, but the docs
-describe consensus semantics and the repo ships **no sample odds JSON** to show what those
-fields contain for the consensus feed. **Conclusion: treat the stream as consensus; do not
-assume individual sportsbook lines.** TISSUE de-vigs defensively anyway (idempotent on
-already-de-margined input) — `apps/daemon/src/ingest/normalize.ts`.
+probabilities)". Real captured rows (2026-07-13) hard-confirm this: every row carries
+`Bookmaker: "TXLineStablePriceDemargined"`, `BookmakerId: 10021`, and a **`Pct`** field = the
+de-margined probability % (e.g. O/U 2.5 → `["57.504","42.481"]`, summing to ~100%). Real
+`Prices` are decimal ×1000 (e.g. `[1739, 2354]`). There is a single synthetic "bookmaker"
+(the StablePrice engine), not per-sportsbook lines. TISSUE de-vigs defensively and reproduces
+the official `Pct` to <2 bps (`apps/daemon/src/ingest/devig.test.ts` REAL CAPTURE).
 
 ### `Odds` struct — full field list (`idl/txoracle.json` type `Odds`)
 `fixture_id: i64` · `message_id: string` · `ts: i64` · `bookmaker: string` ·

@@ -12,3 +12,4 @@ out/
 .DS_Store
 *.log
 /apps/daemon/.keys
+apps/daemon/.keys/
