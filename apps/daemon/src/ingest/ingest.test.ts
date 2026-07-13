@@ -52,6 +52,21 @@ describe("FeedHealthTracker", () => {
     expect(h.verdict(6000).gapHalt).toBe(false);
     expect(h.verdict(10000).gapHalt).toBe(true);
   });
+
+  it("BUG-CLASS GUARD: verdict must be read BEFORE mark, or the gap is erased (V4)", () => {
+    // Correct order: check gap since last activity, THEN record new activity.
+    const good = new FeedHealthTracker("devnet", 8000, 4000);
+    good.mark(1000);
+    const gapSeen = good.verdict(20000).gapHalt; // 19s gap → halt
+    good.mark(20000);
+    expect(gapSeen).toBe(true);
+
+    // Buggy order (mark-before-verdict at same ts): the gap is erased before it's seen.
+    const bad = new FeedHealthTracker("devnet", 8000, 4000);
+    bad.mark(1000);
+    bad.mark(20000); // marking first...
+    expect(bad.verdict(20000).gapHalt).toBe(false); // ...hides the 19s gap. Never do this.
+  });
 });
 
 describe("normalizeScores", () => {

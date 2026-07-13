@@ -71,6 +71,12 @@ export interface EngineOptions {
    * spreads regardless.
    */
   readonly feedGapHalt?: boolean;
+  /**
+   * Seed the drawdown-kill latch true on start. Set by crash-recovery (state/recovery.ts)
+   * so a desk that was drawdown-killed before a restart STAYS killed — never auto-resumes
+   * (operator restart only, PRD §5). Never un-kills once true.
+   */
+  readonly initialKilled?: boolean;
 }
 
 export function runEngine(
@@ -95,7 +101,7 @@ export function runEngine(
   const forecasts: ForecastPoint[] = [];
 
   let pricer: TissuePricer | null = null;
-  let killed = false;
+  let killed = opts.initialKilled ?? false;
   let openingHome: OddsMessage | null = null;
   let openingTotals: OddsMessage | null = null;
   const fixtureId = corpus.find((m) => m)?.fixtureId ?? "UNKNOWN";

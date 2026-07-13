@@ -82,22 +82,41 @@ export class SseClient {
     }
     this.health.mark(this.now());
 
+    // Independent watchdog: `reader.read()` blocks during a silent feed, so gap detection
+    // MUST NOT rely on frame arrival. This timer checks liveness on its own cadence and
+    // fires onGap while the read loop is parked. (V4 fix — the same check-before-mark bug
+    // class the engine had; here it also needed a watchdog for the blocking-read case.)
+    const watchdog = setInterval(() => {
+      this.checkGap();
+    }, Math.max(250, Math.floor(this.opts.maxGapMs / 2)));
+
     const parser = new SseFrameParser();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    while (!this.stopped) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const frames = parser.push(decoder.decode(value, { stream: true }));
-      const nowMs = this.now();
-      for (const frame of frames) {
-        this.health.mark(nowMs);
-        if (frame.heartbeat || frame.data === "") continue;
-        this.handleData(frame.id, frame.data);
+    try {
+      while (!this.stopped) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const nowMs = this.now();
+        // CHECK the gap since last activity BEFORE recording this frame's activity —
+        // marking first would erase the very gap we need to detect.
+        this.checkGap(nowMs);
+        const frames = parser.push(decoder.decode(value, { stream: true }));
+        for (const frame of frames) {
+          if (frame.heartbeat || frame.data === "") continue; // liveness only
+          this.handleData(frame.id, frame.data);
+        }
+        this.health.mark(nowMs); // record activity AFTER the gap check
       }
-      const v = this.health.verdict(nowMs);
-      if (v.gapHalt) this.opts.onGap(v.gapMs);
+    } finally {
+      clearInterval(watchdog);
     }
+  }
+
+  /** Emit onGap if the feed has been silent past max_gap_ms. Idempotent; safe to over-call. */
+  private checkGap(nowMs: number = this.now()): void {
+    const v = this.health.verdict(nowMs);
+    if (v.gapHalt) this.opts.onGap(v.gapMs);
   }
 
   private handleData(id: string | undefined, data: string): void {
