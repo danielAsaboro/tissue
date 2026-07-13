@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TISSUE — TxODDS Trading Tools and Agents submission</title>
+<style>:root{--ink:#16181d;--muted:#636b78;--line:#dfe2e8;--paper:#fbfbfd;--accent:#716ce7;--warn:#a53b32}*{box-sizing:border-box}body{margin:0;background:#f0f1f5;color:var(--ink);font:15px/1.55 Inter,ui-sans-serif,system-ui,sans-serif}main{max-width:980px;margin:36px auto;background:var(--paper);padding:48px;border:1px solid var(--line);border-radius:18px}h1{font-size:44px;line-height:1;margin:0 0 10px}h2{margin:36px 0 12px}h3{margin:24px 0 8px}.tagline{font-size:21px;color:var(--muted)}.status{padding:14px 16px;border-left:4px solid var(--warn);background:#fff2ef}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.card{padding:16px;border:1px solid var(--line);border-radius:12px;background:white}.label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}code{background:#ececf5;padding:2px 5px;border-radius:4px}pre{overflow:auto;background:#171920;color:#f5f6fa;padding:18px;border-radius:10px}a{color:var(--accent)}table{border-collapse:collapse;width:100%}th,td{text-align:left;vertical-align:top;padding:11px;border-bottom:1px solid var(--line)}.ready{color:#28795f}.pending{color:var(--warn);font-weight:700}</style></head>
+<body><main>
+<div class="label">TxODDS World Cup Hackathon · Trading Tools and Agents</div>
+<h1>TISSUE</h1>
+<p class="tagline">An autonomous in-play desk that turns TxLINE scores and consensus odds into risk-controlled fair values, quote recommendations, and replayable proof.</p>
+<p class="status"><strong>Release status:</strong> code and local deployment artifacts are complete; public application access, a current confirmed proof transaction, real multi-fixture metrics, and the separately required demo video are still pending. Do not copy this artifact into the submission form until those fields are complete.</p>
+
+<h2>Copy-paste project description</h2>
+<div class="card">
+<p>Sports traders face a hard problem in-play: a score event changes fair value immediately, but the consensus market reacts over seconds, data can go stale, and a strategy that looks good in a backtest can quietly depend on fictional fills. Most dashboards visualize this problem; TISSUE operates it.</p>
+<p>TISSUE is an autonomous fair-value and quote-policy desk built on TxLINE. It consumes the live scores and StablePrice odds streams, reconstructs match state, prices 1X2 and totals with a Poisson/Dixon-Coles model, detects event-to-market latency, and publishes two-sided quote recommendations only when edge survives feed-health, adverse-selection, model-divergence, inventory, exposure, and drawdown gates. When information quality drops, it halts instead of inventing certainty.</p>
+<p>Solana is the evidence layer. Every live odds input is checked against the network’s daily root through <code>validate_odds</code>, while every decision-driving score update proves home/away goals and red cards through <code>validate_stat</code>. No source message enters the corpus or decision engine before validation, and recovery freshly revalidates persisted inputs. Each TISSUE decision is also hash-chained, so a judge can replay the exact corpus and reproduce the same ledger head. Live mode never claims a fill or PnL because TxLINE does not expose an orderbook; matching exists only in explicitly labelled replay research.</p>
+<p>The system is three deployable services: a live-only daemon, a Next.js operating dashboard, and an isolated read-only analyst that narrates already-decided ledger evidence through three constrained tools. It fails closed without real credentials, persists crash-recoverable corpora, reconnects both SSE streams with dedupe and gap detection, and exposes health, readiness, verification, state, and event endpoints. Live decisions advance incrementally and append one ledger record instead of replaying the full fixture. The repository currently passes 120 tests, lint, all package typechecks, a zero-vulnerability production audit, deterministic replay, a production web build, and fresh local builds of all three pinned non-root images.</p>
+<p>Next, we will capture current credentialed score/odds proof evidence, publish a multi-fixture holdout evaluation, and connect the quote output to a permissionless venue when TxLINE’s announced trading interface becomes available.</p>
+</div>
+
+<h2>Judge access</h2>
+<div class="grid">
+  <div class="card"><div class="label">Application</div><div class="pending">PUBLIC URL REQUIRED</div></div>
+  <div class="card"><div class="label">Evidence API</div><div class="pending">PUBLIC URL REQUIRED</div></div>
+  <div class="card"><div class="label">Source</div><span>github.com/danielAsaboro/tissue</span><br><span class="pending">INTENTIONALLY PRIVATE DURING COMPETITION</span></div>
+  <div class="card"><div class="label">TxLINE subscription</div><a href="https://explorer.solana.com/tx/qx7A7wmYnTfffUUxzvLu5fFk9eM34LzZXvfw9mDbbBJpkmjfgqYKX3gNMBve3iNzsNThnBiJWuzhbgxLBssHuDX?cluster=devnet">Finalized devnet transaction</a><br><span class="pending">validate_odds signature still required</span></div>
+  <div class="card"><div class="label">Demo video</div><div class="pending">REQUIRED BEFORE SUBMISSION</div></div>
+</div>
+
+<h2>60-second judge path</h2>
+<ol>
+  <li>Open Overview and confirm the network, dual-stream health, proof counts, active fixture, and current desk state.</li>
+  <li>Open Quotes to see Tissue fair value versus TxLINE StablePrice and every risk-approved output.</li>
+  <li>Open Radar to inspect event-to-market reaction classifications and halt causes.</li>
+  <li>Open Decisions to verify the hash chain and TxLINE/Solana evidence for each source message.</li>
+  <li>Open Grade to inspect CLV, Brier calibration, latency, and ablation results from real fixtures.</li>
+  <li>Ask the read-only analyst why the desk halted; inspect its exact ledger citations.</li>
+</ol>
+
+<h2>Specific TxLINE integration</h2>
+<table><thead><tr><th>Boundary</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>POST /auth/guest/start</code></td><td>Guest JWT acquisition and renewal.</td></tr>
+<tr><td><code>POST /api/token/activate</code></td><td>Wallet-signed subscription activation.</td></tr>
+<tr><td><code>GET /api/scores/stream</code></td><td>Live match-state SSE.</td></tr>
+<tr><td><code>GET /api/odds/stream</code></td><td>Live StablePrice consensus SSE.</td></tr>
+<tr><td><code>GET /api/scores/snapshot/{fixtureId}</code></td><td>Historical capture and recovery support.</td></tr>
+<tr><td><code>GET /api/odds/snapshot/{fixtureId}?asOf=…</code></td><td>Real in-play odds corpus capture.</td></tr>
+<tr><td><code>GET /api/odds/validation?messageId=…&amp;ts=…</code></td><td>Merkle proof for Solana <code>validate_odds</code>.</td></tr>
+<tr><td><code>GET /api/scores/stat-validation?fixtureId=…&amp;seq=…&amp;statKey=…</code></td><td>Merkle proof for Solana <code>validate_stat</code>.</td></tr>
+</tbody></table>
+
+<h2>Local setup for judges</h2>
+<pre>cd tissue  # use the authorized private checkout
+pnpm install --frozen-lockfile
+pnpm run ci
+pnpm run build
+cp .env.example .env  # add real TxLINE credentials
+docker compose up --build
+# Dashboard: http://localhost:3000
+# Evidence API: http://localhost:8788/state</pre>
+
+<h2>Criteria alignment</h2>
+<table><thead><tr><th>Criterion</th><th>Evidence</th></tr></thead><tbody>
+<tr><td>Core functionality and ingestion</td><td>Dual real SSE clients, normalized feed, durable corpora, strategy output, dashboard and API. No live-to-synthetic fallback.</td></tr>
+<tr><td>Autonomous operation</td><td>Reconnect, JWT renewal, dedupe, watchdog halts, risk authorization, proof queue, persistence, recovery, and readiness run without manual trading input.</td></tr>
+<tr><td>Logic and architecture</td><td>Deterministic incremental pricing/risk engine, explicit execution port, replay equality, hash chain, 120 tests, isolated read-only analyst.</td></tr>
+<tr><td>Innovation</td><td>Combines an opening-calibrated price that evolves independently from verified match state, event-to-market latency classification, source proof, and fill-independent grading in one live desk.</td></tr>
+<tr><td>Production readiness</td><td>Non-root pinned containers, health/readiness, bounded network requests, fail-closed configuration, zero known production vulnerabilities. Public deployment evidence still required.</td></tr>
+</tbody></table>
+
+<h2>Team</h2>
+<ul><li>Daniel — daemon core, Latency Radar, replay, grade sheet.</li><li>Tim — risk framework, execution integration, dashboard, product narrative.</li></ul>
+
+<h2>TxLINE feedback</h2>
+<p>The normalized StablePrice schema, stable message IDs, dual-stream design, and Merkle validation endpoints make deterministic autonomous tooling unusually practical. The main friction was discovery and documentation: activation returned plain text in the observed release, historical odds needed an in-play <code>asOf</code>, the free tier was totals-only, and the odds validation endpoint had to be found outside the initial quickstart. TISSUE records these exact findings without masking them with fallback data.</p>
+</main></body></html>

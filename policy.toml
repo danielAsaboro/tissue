@@ -27,18 +27,19 @@ match_regulation_minutes = 90
 [model.red_card]
 # Multiplicative adjustment to a side's remaining lambda when it goes a man down.
 # Applied to the offending side's attack, and (inversely) to the opponent.
-# Empirical-ish placeholders; Daniel/Tim to calibrate against corpus.
+# Conservative launch coefficients. Real-corpus calibration is an explicit evidence gate;
+# the live desk exposes the resulting decisions without claiming these are fitted values.
 offending_side_attack_mult = 0.75
 opponent_side_attack_mult = 1.15
 
 [model.pressure]
-# Bounded, decaying pressure modifier from possession states
+# Bounded, decaying pressure modifier from discrete TxLINE danger events
 # (Attack / Danger / HighDanger). FLAGGED HEURISTIC — on/off switch.
 # When enabled, nudges short-horizon lambda within [1-bound, 1+bound].
 enabled = true
 max_abs_adjustment = 0.12   # hard bound on the multiplier deviation from 1.0
 decay_half_life_ms = 45000  # pressure signal decays toward neutral with this half-life
-# Weights for each possession-state class contributing to the pressure score.
+# Weights for each danger-event class contributing to the pressure score.
 attack_weight = 0.2
 danger_weight = 0.5
 high_danger_weight = 1.0
@@ -124,12 +125,10 @@ compression_bps = 150
 
 [exec]
 # EXECUTION MODEL (see GROUND-TRUTH.md, feedback.md): the sponsor devnet program has
-# NO intent-book. Matching/fills run through an internal SIMULATED maker book,
-# labeled 'simulated' everywhere it surfaces. Provenance anchoring via validate_odds
-# is REAL and callable today. A future real permissionless orderbook is a swap-in
-# behind the same exec/ port boundary.
-book_mode = "simulated"          # "simulated" | "onchain" (onchain = not-yet-available)
-anchor_mode = "devnet_validate_odds"  # real CPI anchoring of sampled decisions
+# NO intent-book. Live mode publishes risk-approved quotes through the daemon API and
+# never invents counterparties, fills, or PnL. Replay-only research may simulate fills.
+book_mode = "quote_publication"
+anchor_mode = "validate_odds"  # proof endpoint + real on-chain view/optional transaction
 intent_ttl_ms = 30000            # posted intents expire (then Cancelled, residual refunded)
 # Priority-fee ladder on devnet congestion: escalate through these microlamports/CU,
 # then halt the market rather than fail silently.

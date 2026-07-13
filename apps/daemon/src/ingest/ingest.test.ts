@@ -4,6 +4,18 @@ import { FeedHealthTracker } from "./feedHealth.js";
 import { normalizeOdds, normalizeScores } from "./normalize.js";
 import { generateSyntheticCorpus } from "./synthetic.js";
 import { PERIOD_PREFIX, STAT_KEY, STATUS } from "./soccerFeed.js";
+import { parseActivationToken } from "./txlineAuth.js";
+
+describe("TxLINE auth response compatibility", () => {
+  it("accepts the live plain-text token and documented JSON shapes", () => {
+    expect(parseActivationToken("txoracle_api_live\n")).toBe("txoracle_api_live");
+    expect(parseActivationToken('{"token":"txoracle_api_json"}')).toBe("txoracle_api_json");
+    expect(parseActivationToken('"txoracle_api_string"')).toBe("txoracle_api_string");
+    expect(parseActivationToken("{}" )).toBe("");
+    expect(parseActivationToken("<html>gateway error</html>")).toBe("");
+    expect(parseActivationToken("unexpected-success-body")).toBe("");
+  });
+});
 
 describe("SseFrameParser", () => {
   it("parses a single data frame on blank line", () => {
@@ -87,6 +99,7 @@ describe("normalizeScores", () => {
     expect(m!.homeScore).toBe(2);
     expect(m!.awayScore).toBe(1);
     expect(m!.awayReds).toBe(1);
+    expect(m!.sourceSeq).toBe(5);
     expect(m!.isFinal).toBe(false);
   });
 

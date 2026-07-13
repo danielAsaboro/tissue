@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { loadPolicy, type Policy } from "../config/policy.js";
 import { percentile, percentileOf, computeBand } from "./percentiles.js";
-import { runRadar, Radar } from "./index.js";
+import { runRadar } from "./index.js";
 import { generateSyntheticCorpus } from "../ingest/synthetic.js";
 
 let policy: Policy;

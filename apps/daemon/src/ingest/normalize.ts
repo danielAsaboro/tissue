@@ -106,6 +106,7 @@ export function normalizeScores(raw: RawScores, network: Network): ScoreMessage 
     fixtureId,
     ts: millis(ts),
     network,
+    ...(Number.isSafeInteger(seq) && seq > 0 ? { sourceSeq: seq } : {}),
     minute,
     homeScore,
     awayScore,

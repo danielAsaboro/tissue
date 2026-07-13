@@ -33,6 +33,7 @@ export interface ChatResult {
   message: { role: "assistant"; content: string | null; tool_calls?: ToolCall[] };
   provider: string;
   model: string;
+  fellBack: boolean;
 }
 
 export interface LlmClient {
@@ -44,6 +45,40 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+}
+
+const MAX_PROVIDER_RESPONSE_BYTES = 2_097_152;
+
+async function readLimitedResponse(response: Response): Promise<string> {
+  const announced = Number(response.headers.get("content-length"));
+  if (Number.isFinite(announced) && announced > MAX_PROVIDER_RESPONSE_BYTES) {
+    throw new Error("LLM provider response exceeded the configured size limit");
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_PROVIDER_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error("LLM provider response exceeded the configured size limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
 }
 
 export function groqConfig(): ProviderConfig | null {
@@ -87,11 +122,12 @@ async function callProvider(
     if (res.status === 429 || res.status >= 500) {
       throw Object.assign(new Error(`${cfg.name} ${res.status}`), { retryable: true, status: res.status });
     }
-    if (!res.ok) throw new Error(`${cfg.name} ${res.status}: ${await res.text()}`);
-    const body = (await res.json()) as { choices: { message: ChatResult["message"] }[] };
+    const responseText = await readLimitedResponse(res);
+    if (!res.ok) throw new Error(`${cfg.name} ${res.status}: ${responseText.slice(0, 1_000)}`);
+    const body = JSON.parse(responseText) as { choices: { message: ChatResult["message"] }[] };
     const message = body.choices?.[0]?.message;
     if (!message) throw new Error(`${cfg.name}: empty completion`);
-    return { message, provider: cfg.name, model: cfg.model };
+    return { message, provider: cfg.name, model: cfg.model, fellBack: false };
   } finally {
     clearTimeout(timer);
   }
@@ -120,7 +156,7 @@ export class FallbackLlmClient implements LlmClient {
         if (!this.fallback) throw err;
         const r = await callProvider(this.fallback, messages, tools, this.timeoutMs);
         this.providerLog.push({ provider: r.provider, fellBack: true });
-        return r;
+        return { ...r, fellBack: true };
       }
     }
     const r = await callProvider(this.fallback!, messages, tools, this.timeoutMs);

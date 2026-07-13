@@ -19,9 +19,9 @@ export default function LandingPage() {
         </span>
         <h1 className="lp-display">An independent price for every live match market.</h1>
         <p className="lp-lede">
-          Odds move the instant something happens on the pitch. Tissue reads the match itself,
-          the score, the clock, the cards, the pressure, and forms its own price. When the market
-          disagrees, it quotes. When a move has no cause it can see, it halts.
+          Odds move the instant something happens on the pitch. Tissue calibrates from the opening
+          consensus, then evolves its own price from verified score, clock, and card state. When
+          the live market disagrees, it quotes. When a move has no cause it can see, it halts.
         </p>
         <div className="lp-cta-row">
           <Link href="/overview" className="lp-btn lp-btn-primary">
@@ -33,7 +33,7 @@ export default function LandingPage() {
         </div>
         <div className="lp-ticker">
           <span>
-            <b>98</b> tests green
+            <b>120</b> tests green
           </span>
           <span>
             <b>replay(corpus) === ledger</b> in CI
@@ -65,15 +65,15 @@ export default function LandingPage() {
             <p className="lp-kicker">The price</p>
             <h2 className="lp-h2">It builds its own price from the match.</h2>
             <p className="lp-p">
-              Tissue reads the scores stream, not the odds screen. Score, minute, red cards, and
-              attacking pressure feed a goals model. De-vigged consensus is solved into scoring
-              rates, run through Poisson with a Dixon-Coles low-score correction, then adjusted
-              live for the time remaining and the current scoreline. Out comes a fair price for
-              each market.
+              Tissue reads both TxLINE streams. Opening de-vigged consensus is solved into scoring
+              rates and run through Poisson with a Dixon-Coles low-score correction. Verified
+              score, minute, and red cards then evolve that model for the time remaining and the
+              current scoreline. Out comes a fair price for each market.
             </p>
             <p className="lp-p">
-              The price is independent of the odds. That is what lets it judge whether a market
-              move is information or noise.
+              After opening calibration, the live state projection is not copied from the latest
+              odds tick. Comparing the two is what lets Tissue judge whether a move is information
+              or noise.
             </p>
           </div>
           <div className="lp-grid">
@@ -85,7 +85,7 @@ export default function LandingPage() {
             <div className="lp-card">
               <div className="lp-dot">t</div>
               <h3>Live-adjusted</h3>
-              <p>Remaining-time decay, the scoreline in the matrix, red cards, bounded pressure.</p>
+              <p>Remaining-time decay, the scoreline in the matrix, and verified red cards.</p>
             </div>
             <div className="lp-card">
               <div className="lp-dot">#</div>
@@ -133,17 +133,16 @@ export default function LandingPage() {
           <h2 className="lp-h2">Every decision is hash-chained and replayable.</h2>
           <p className="lp-p">
             Each decision is a record that embeds the triggering feed message hash and links to the
-            one before it. Sampled inputs are anchored on-chain through the sponsor&apos;s
-            validate_odds call, which is permissionless and callable today. The pricing core reads
-            no wall-clock and does no I/O, so the same corpus produces the same ledger, byte for
-            byte.
+            one before it. Every live odds input must pass the sponsor&apos;s validate_odds call;
+            decision-driving score statistics must pass validate_stat. The pricing core reads no
+            wall-clock and does no I/O, so the same corpus produces the same ledger, byte for byte.
           </p>
           <div className="lp-code">
             replay(corpus) === ledger <span className="ok">✓ asserted in CI</span>
           </div>
           <div className="lp-stats">
             <div className="lp-stat">
-              <span className="n">98</span>
+              <span className="n">120</span>
               <span className="k">tests green, including replay equality and the chaos drills</span>
             </div>
             <div className="lp-stat">
@@ -165,19 +164,20 @@ export default function LandingPage() {
       {/* 5. The honest execution story */}
       <section className="lp-section">
         <p className="lp-kicker">The execution, stated plainly</p>
-        <h2 className="lp-h2">The book is simulated. The anchoring is real.</h2>
+        <h2 className="lp-h2">Quotes are published. Inputs are verified.</h2>
         <div className="lp-note">
           <p>
             We checked the sponsor&apos;s on-chain program at commit <strong>f37473a</strong>. It is a
             data oracle: subscription, root anchoring, and validation. It has no intent-book. The
             sponsor&apos;s own README says a non-custodial orderbook is <strong>in preparation</strong>.
-            So Tissue does not pretend to match on a venue that is not live yet.
+            So Tissue does not pretend to fill orders on a venue that is not live yet.
           </p>
           <p>
-            Matching runs through an internal <strong>simulated maker book</strong>, labeled
-            simulated everywhere it appears. Provenance anchoring uses the real validate_odds call
-            on devnet, the same network as the money. The execution layer is a port: when the real
-            orderbook ships, it swaps in behind the same boundary, not a rewrite.
+            Live mode publishes every risk-approved quote through a real API and never invents a
+            counterparty, fill, or PnL. Each TxLINE odds input is checked through validate_odds;
+            cumulative goals and red cards are checked through validate_stat before either stream
+            can enter the engine. Transaction mode additionally records a confirmed odds signature.
+            A future orderbook remains a swap-in execution boundary.
           </p>
           <p>
             Fill-independence is the point. Closing-line value grades every quote against the close
@@ -189,10 +189,10 @@ export default function LandingPage() {
       {/* 6. The grade sheet */}
       <div className="lp-band">
         <section className="lp-section">
-          <p className="lp-kicker">Graded in public</p>
-          <h2 className="lp-h2">Right or wrong, it is not hidden.</h2>
+          <p className="lp-kicker">Graded from evidence</p>
+          <h2 className="lp-h2">Right or wrong, it stays in the ledger.</h2>
           <p className="lp-p">
-            The grade sheet publishes automatically. Every metric is computed from the same
+            The grade sheet updates automatically. Every metric is computed from the same
             hash-chained ledger, so the scorecard cannot drift from what the desk actually did.
           </p>
           <div className="lp-metrics">
@@ -200,7 +200,7 @@ export default function LandingPage() {
             <span className="lp-metric-pill">Brier score with calibration decomposition</span>
             <span className="lp-metric-pill">Reaction-latency distributions</span>
             <span className="lp-metric-pill">Hit rate per signal class</span>
-            <span className="lp-metric-pill">Realized PnL, simulated label intact</span>
+            <span className="lp-metric-pill">Published quote availability and closing-line value</span>
           </div>
         </section>
       </div>

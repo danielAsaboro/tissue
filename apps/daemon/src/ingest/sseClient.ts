@@ -22,17 +22,21 @@ export interface SseClientOptions {
   renewJwt(): Promise<void>;
   onMessage(msg: FeedMessage): void;
   onGap(gapMs: number): void;
+  onError(error: Error): void;
   /** Injected clock — real Date.now() in prod, a fake in tests. */
   now?(): number;
 }
 
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
+const CONNECT_TIMEOUT_MS = 20_000;
 
 export class SseClient {
   private stopped = false;
   private attempt = 0;
   private lastEventId: string | undefined;
   private readonly health: FeedHealthTracker;
+  private activeController: AbortController | undefined;
+  private wakeBackoff: (() => void) | undefined;
 
   constructor(private readonly opts: SseClientOptions) {
     this.health = new FeedHealthTracker(opts.network, opts.maxGapMs, opts.softStaleMs);
@@ -53,19 +57,29 @@ export class SseClient {
         this.attempt = 0;
       } catch (err) {
         if (this.stopped) break;
+        const error = err instanceof Error ? err : new Error(String(err));
+        this.opts.onError(error);
         const status = (err as { status?: number }).status;
         if (status === 401 || status === 403) {
-          await this.opts.renewJwt();
+          try {
+            await this.opts.renewJwt();
+          } catch (renewalError) {
+            this.opts.onError(new Error(
+              `JWT renewal failed: ${renewalError instanceof Error ? renewalError.message : String(renewalError)}`,
+            ));
+          }
         }
         const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)]!;
         this.attempt++;
-        await sleep(delay);
+        await this.backoff(delay);
       }
     }
   }
 
   stop(): void {
     this.stopped = true;
+    this.activeController?.abort();
+    this.wakeBackoff?.();
   }
 
   private async connectOnce(): Promise<void> {
@@ -76,7 +90,22 @@ export class SseClient {
     };
     if (this.lastEventId) headers["last-event-id"] = this.lastEventId;
 
-    const res = await fetch(`${this.opts.origin}${this.path()}`, { headers });
+    const controller = new AbortController();
+    this.activeController = controller;
+    let connectTimedOut = false;
+    const connectTimer = setTimeout(() => {
+      connectTimedOut = true;
+      controller.abort();
+    }, CONNECT_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(`${this.opts.origin}${this.path()}`, { headers, signal: controller.signal });
+    } catch (error) {
+      if (connectTimedOut) throw new Error(`SSE connection timed out after ${CONNECT_TIMEOUT_MS}ms`);
+      throw error;
+    } finally {
+      clearTimeout(connectTimer);
+    }
     if (!res.ok || !res.body) {
       throw Object.assign(new Error(`SSE ${res.status}`), { status: res.status });
     }
@@ -110,6 +139,8 @@ export class SseClient {
       }
     } finally {
       clearInterval(watchdog);
+      if (this.activeController === controller) this.activeController = undefined;
+      reader.releaseLock();
     }
   }
 
@@ -125,7 +156,8 @@ export class SseClient {
     try {
       parsed = JSON.parse(data);
     } catch {
-      return; // non-JSON keepalive / banner
+      this.opts.onError(new Error(`${this.opts.stream} SSE emitted a non-JSON data frame`));
+      return;
     }
     const rows = Array.isArray(parsed) ? parsed : [parsed];
     for (const row of rows) {
@@ -139,8 +171,17 @@ export class SseClient {
       this.opts.onMessage(msg);
     }
   }
-}
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  private backoff(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        if (this.wakeBackoff === done) this.wakeBackoff = undefined;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.wakeBackoff = done;
+      if (this.stopped) done();
+    });
+  }
 }

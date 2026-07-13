@@ -33,8 +33,8 @@ export const TOOLS: readonly ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        fixture_id: { type: "string", description: "Optional fixture id to filter by." },
-        limit: { type: "number", description: "Max rows (1-200, default 20)." },
+        fixture_id: { type: "string", description: "Optional fixture id to filter by (maximum 128 characters)." },
+        limit: { type: "integer", description: "Max rows (1-200, default 20)." },
       },
       additionalProperties: false,
     },
@@ -69,7 +69,7 @@ export const TOOLS: readonly ToolDef[] = [
   {
     name: "query_ledger_by_fixture",
     description:
-      "Return the full ordered decision ledger for one fixture (every decision, in sequence, with its hash chain). Read-only. Use to walk exactly what the desk did and cite specific decisions.",
+      "Return up to the 500 most recent decision-ledger records for one fixture, ordered by sequence and including the hash chain. Read-only. Use to walk what the desk did and cite specific decisions.",
     inputSchema: {
       type: "object",
       properties: { fixture_id: { type: "string", description: "The fixture id (required)." } },

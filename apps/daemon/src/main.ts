@@ -1,67 +1,50 @@
-import { loadPolicy } from "./config/policy.js";
-import { readCorpus } from "./ingest/corpus.js";
-import { generateSyntheticCorpus, SYNTHETIC_FIXTURE_ID } from "./ingest/synthetic.js";
-import { writeCorpus } from "./ingest/corpus.js";
-import { runEngine } from "./replay/engine.js";
-import { grade } from "./grader/grader.js";
-import { verifyChain } from "./ledger/ledger.js";
-import type { FeedMessage } from "@tissue/shared";
-
-/**
- * Daemon entry point. Two modes:
- *   - REPLAY (default, offline): run the deterministic engine over a corpus and report.
- *   - LIVE: requires TISSUE_KEYPAIR_PATH + activated subscription; wires the dual SSE
- *     clients (src/ingest/sseClient.ts) into the SAME engine loop. Live wiring is gated on
- *     credentials + an activated X-Api-Token (see GROUND-TRUTH.md auth chain); until those
- *     exist the daemon runs the replay path so it is always demonstrable.
- *
- * The unattended-operation guarantee (PRD [AO]): all halts are automated inside the engine
- * (feed-gap, unexplained-movement, drawdown kill, model-divergence) — no human in the loop.
- */
+import { closeApiServer, createApiServer, listen } from "./api/server.js";
+import { loadCredentials, loadLiveConfig } from "./runtime/config.js";
+import { LiveDesk } from "./runtime/liveDesk.js";
 
 async function main(): Promise<void> {
-  const policy = loadPolicy();
-  const fixtureId = process.env.TISSUE_SEED_FIXTURE_ID ?? SYNTHETIC_FIXTURE_ID;
-
-  let corpus: FeedMessage[];
-  try {
-    corpus = readCorpus(fixtureId);
-  } catch {
-    corpus = generateSyntheticCorpus(fixtureId);
-    writeCorpus(fixtureId, corpus);
-  }
-
-  const result = runEngine(corpus, policy);
-  const chain = verifyChain(result.ledger.all());
-  const g = grade(result, policy);
-
+  const config = loadLiveConfig();
+  const credentials = loadCredentials(config);
+  const desk = new LiveDesk(config, credentials);
+  const server = createApiServer(desk, config);
+  await listen(server, config.port);
+  await desk.start();
   console.log(
-    JSON.stringify(
-      {
-        mode: "replay",
-        fixtureId,
-        messages: corpus.length,
-        decisions: result.ledger.length,
-        hashChainOk: chain.ok,
-        headHash: result.ledger.headHash,
-        radarEvents: result.radarEvents.length,
-        halts: result.halts.map((h) => h.reason),
-        anchorsPrepared: result.anchors.length,
-        grade: {
-          clv: g.clv,
-          brier: { brier: g.brier.brier, reliability: g.brier.reliability, resolution: g.brier.resolution },
-          pnlUnits: g.pnl.realizedUnits,
-          pnlSimulated: g.pnl.simulated,
-        },
-        finalScore: result.finalScore,
-      },
-      null,
-      2,
-    ),
+    JSON.stringify({
+      event: "tissue.started",
+      mode: config.mode,
+      execution: "quote-publication",
+      network: config.network,
+      origin: config.origin,
+      api: `http://0.0.0.0:${config.port}`,
+    }),
   );
+  let shuttingDown = false;
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await desk.stop();
+      await closeApiServer(server);
+      process.exit(0);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "tissue.shutdown_failed",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      process.exit(1);
+    }
+  };
+  process.once("SIGINT", () => void shutdown());
+  process.once("SIGTERM", () => void shutdown());
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((error: unknown) => {
+  console.error(
+    JSON.stringify({
+      event: "tissue.start_failed",
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
   process.exit(1);
 });

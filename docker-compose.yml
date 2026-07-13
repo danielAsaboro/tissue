@@ -1,0 +1,60 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.daemon
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TISSUE_MODE: live
+      TISSUE_API_PORT: 8788
+      TISSUE_ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "127.0.0.1:8788:8788"
+    volumes:
+      - tissue-corpus:/app/corpus
+    restart: unless-stopped
+    logging: *default-logging
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    environment:
+      TISSUE_DAEMON_URL: http://daemon:8788
+      TISSUE_NETWORK: ${TISSUE_NETWORK:-devnet}
+      ANALYST_URL: http://analyst:8787
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      daemon:
+        condition: service_started
+      analyst:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
+  analyst:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyst
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ANALYST_PORT: 8787
+      ANALYST_DB_PATH: /app/corpus/analyst.db
+    volumes:
+      - tissue-corpus:/app/corpus
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  tissue-corpus:

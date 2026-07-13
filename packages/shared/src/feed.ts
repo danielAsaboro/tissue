@@ -28,6 +28,8 @@ export type PressureClass = "none" | "attack" | "danger" | "high_danger";
 /** In-play match state derived from the scores stream. */
 export interface ScoreMessage extends FeedEnvelope {
   readonly kind: "score";
+  /** TxLINE fixture sequence used to retrieve the exact publisher-anchored stat proof. */
+  readonly sourceSeq?: number;
   readonly minute: number;
   readonly homeScore: number;
   readonly awayScore: number;

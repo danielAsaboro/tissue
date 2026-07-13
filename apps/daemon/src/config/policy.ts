@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 /**
@@ -78,7 +79,7 @@ export interface Policy {
     readonly draw_compression: { watch_after_minute: number; compression_bps: number };
   };
   readonly exec: {
-    readonly book_mode: "simulated" | "onchain";
+    readonly book_mode: "quote_publication";
     readonly anchor_mode: string;
     readonly intent_ttl_ms: number;
     readonly priority_fee_ladder_microlamports: number[];
@@ -94,9 +95,11 @@ export interface Policy {
   };
 }
 
-const DEFAULT_POLICY_PATH = fileURLToPath(
-  new URL("../../../../policy.toml", import.meta.url),
-);
+const cwdPolicyPath = resolve(process.cwd(), "policy.toml");
+const DEFAULT_POLICY_PATH = process.env.TISSUE_POLICY_PATH
+  ?? (existsSync(cwdPolicyPath)
+    ? cwdPolicyPath
+    : fileURLToPath(new URL("../../../../policy.toml", import.meta.url)));
 
 export function loadPolicyFromString(toml: string): Policy {
   const parsed = parseToml(toml) as unknown as Policy;

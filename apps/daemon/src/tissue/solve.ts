@@ -11,10 +11,10 @@ import { outcome1x2 } from "./outcomes.js";
  */
 
 export interface SolveInputs {
-  /** De-vigged pre-match 1X2 probabilities (0..1). */
-  readonly home: number;
-  readonly draw: number;
-  readonly away: number;
+  /** De-vigged pre-match 1X2 probabilities (0..1), when the subscribed bundle carries it. */
+  readonly home?: number;
+  readonly draw?: number;
+  readonly away?: number;
   /** Optional de-vigged totals at a line (0..1) to pin total goals. */
   readonly totals?: { line: number; over: number };
 }
@@ -62,14 +62,21 @@ function solveHomeShare(mu: number, targetHome: number, cfg: SolveConfig): numbe
 }
 
 export function solveBaseLambdas(inp: SolveInputs, cfg: SolveConfig): BaseLambdas {
-  const norm = inp.home + inp.draw + inp.away;
-  const home = inp.home / norm;
+  const has1x2 =
+    inp.home !== undefined &&
+    inp.draw !== undefined &&
+    inp.away !== undefined &&
+    inp.home + inp.draw + inp.away > 0;
+  const norm = has1x2 ? inp.home! + inp.draw! + inp.away! : 1;
+  const home = has1x2 ? inp.home! / norm : 0.5;
 
   const mu = inp.totals
     ? solveMu(inp.totals.line, inp.totals.over, cfg)
-    : muFromDrawPrior(inp.draw / norm, cfg);
+    : has1x2
+      ? muFromDrawPrior(inp.draw! / norm, cfg)
+      : cfg.defaultTotalGoals;
 
-  const share = solveHomeShare(mu, home, cfg);
+  const share = has1x2 ? solveHomeShare(mu, home, cfg) : 0.5;
   return { home: mu * share, away: mu * (1 - share) };
 }
 

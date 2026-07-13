@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TISSUE production readiness review</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0e1014;--panel:#171a21;--line:#303641;--text:#f1f3f7;--muted:#aab2c0;--accent:#918df6;--danger:#ff716c;--warn:#efbd62;--ok:#72d6ad}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 ui-sans-serif,system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:48px 24px 80px}h1{font-size:42px;line-height:1.05;margin:0 0 12px}h2{margin:40px 0 14px}.lede,.muted{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card{border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:18px}.score{font-size:38px;font-weight:750;color:var(--accent)}.no{color:var(--danger)}.ok{color:var(--ok)}table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}th,td{text-align:left;vertical-align:top;padding:13px;border-bottom:1px solid var(--line)}th{color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,monospace;color:#d8d5ff}.critical{color:var(--danger);font-weight:700}.high{color:var(--warn);font-weight:700}.medium{color:#f4dc9d;font-weight:700}.verdict{border-left:4px solid var(--danger)}
+  </style>
+</head>
+<body><main>
+  <p class="muted">Review date: 2026-07-13 · Scope: live daemon, Solana verification, dashboard, analyst, CI, containers, evidence</p>
+  <h1>TISSUE production readiness</h1>
+  <p class="lede">Strong deterministic trading research with fail-closed score and odds verification, but not yet first-prize ready because current credentialed evidence, holdout results, and deployment remain incomplete.</p>
+  <section class="grid">
+    <div class="card"><div class="muted">Security</div><div class="score">B</div></div>
+    <div class="card"><div class="muted">Code quality</div><div class="score">B</div></div>
+    <div class="card"><div class="muted">Mainnet ready</div><div class="score no">NO</div></div>
+    <div class="card"><div class="muted">Automated checks</div><div class="score ok">120</div><div class="muted">tests passing</div></div>
+  </section>
+  <h2>What is genuinely working</h2>
+  <div class="grid">
+    <div class="card">Live-only daemon fails closed without credentials; no synthetic production fallback.</div>
+    <div class="card">Score and odds proofs are identity-bound, strictly decoded, owner-checked, and executed through real TxLINE Solana validation before admission.</div>
+    <div class="card">Decision history is append-only checked, hash-chained, recoverable, and deterministically replayed.</div>
+    <div class="card">Read-only analyst is isolated from execution and its HTTP request boundary is bounded and tested.</div>
+    <div class="card">Zero known production dependency vulnerabilities at the moderate audit threshold.</div>
+    <div class="card">All three pinned non-root images built from the current tree; compiled entry points and loopback health/security boundaries were smoke-tested.</div>
+  </div>
+  <h2>Open findings</h2>
+  <table><thead><tr><th>Severity</th><th>Finding</th><th>Required fix</th></tr></thead><tbody>
+    <tr><td class="high">HIGH</td><td>The clean workspace contains no current confirmed proof transaction, real multi-fixture holdout output, or judge-accessible deployment URL.</td><td>Execute the credentialed runbook, retain unedited signatures/metrics, test in private staging, and replace submission placeholders only after the competition ends and publication is authorized.</td></tr>
+  </tbody></table>
+  <h2>Executed evidence</h2>
+  <table><tbody>
+    <tr><th>Typecheck</th><td><code>pnpm -r typecheck</code> passed.</td></tr>
+    <tr><th>Tests</th><td>106 daemon + 14 analyst tests passed.</td></tr>
+    <tr><th>Live throughput</th><td>195-message deterministic comparison: 72 ms incremental versus 7,390 ms repeated prefix replay (102×), identical head hash.</td></tr>
+    <tr><th>Audit</th><td><code>pnpm audit --prod --audit-level moderate</code>: no known vulnerabilities.</td></tr>
+    <tr><th>Build</th><td><code>pnpm build</code> passed; all dashboard routes compiled.</td></tr>
+    <tr><th>Replay</th><td>Hash chain and identical rerun head passed on <code>SYN-QF1</code>.</td></tr>
+    <tr><th>Containers</th><td>Current daemon, analyst, and dashboard images built successfully as non-root. Daemon failed closed without credentials; analyst health/metrics and dashboard response/security headers passed over loopback.</td></tr>
+  </tbody></table>
+  <h2>Verdict</h2>
+  <div class="card verdict"><strong>Do not submit the current placeholder form as “finished.”</strong> The implementation is unusually honest and technically differentiated, but the winning claim still needs current credentialed score/odds proofs, real holdout metrics, and a deployed judge path. Repository visibility and public endpoints must remain private throughout the competition; publication after it ends still requires explicit owner authorization. Video is intentionally excluded from this work plan.</div>
+</main></body></html>

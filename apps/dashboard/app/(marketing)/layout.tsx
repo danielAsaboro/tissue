@@ -21,7 +21,7 @@ export default function MarketingLayout({ children }: { children: ReactNode }) {
       {children}
       <footer className="mfooter">
         <div className="mfooter-inner">
-          <span>Tissue. An in-play trading desk. Devnet, simulated maker book.</span>
+          <span>Tissue. Live TxLINE input. Autonomous quote policy. Verifiable decisions.</span>
           <span>TxLINE prices the world. Tissue prices the game.</span>
         </div>
       </footer>

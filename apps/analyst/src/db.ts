@@ -78,7 +78,7 @@ export class ReadOnlyLedgerDb {
 
   queryLedgerByFixture(fixtureId: string): DecisionRow[] {
     return this.db
-      .prepare(`SELECT * FROM decisions WHERE fixture_id = ? ORDER BY seq ASC`)
+      .prepare(`SELECT * FROM (SELECT * FROM decisions WHERE fixture_id = ? ORDER BY seq DESC LIMIT 500) ORDER BY seq ASC`)
       .all(fixtureId) as unknown as DecisionRow[];
   }
 

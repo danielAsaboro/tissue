@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   writeFileSync,
+  renameSync,
   existsSync,
 } from "node:fs";
 import { dirname } from "node:path";
@@ -44,7 +45,9 @@ export class Ledger {
 
   writeJsonl(path: string): void {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, this.records.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+    const temp = `${path}.${process.pid}.tmp`;
+    writeFileSync(temp, this.records.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+    renameSync(temp, path);
   }
 
   appendJsonl(path: string, record: DecisionRecord): void {

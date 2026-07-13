@@ -3,13 +3,12 @@ import type { QuoteProposal } from "../strategy/strategy.js";
 
 /**
  * Execution PORT (PRD §Phase 6 + HANDOFF D-001). The daemon talks only to this interface.
- * Today the only implementation is the SIMULATED maker book (matching) plus the REAL
- * validate_odds anchoring adapter (provenance). A future real permissionless orderbook
- * (sponsor: "in preparation") implements the same port and swaps in with no caller change.
+ * Live mode uses this boundary as a quote-publication book with matching disabled. Replay
+ * tests can opt into deterministic simulated matching. A future real permissionless
+ * orderbook implements the same port without changing pricing or risk.
  *
- * INVARIANT: every Intent this port returns carries `simulated: true` while book_mode is
- * "simulated". That flag is surfaced verbatim everywhere downstream — a simulated fill is
- * never presented as a real counterparty fill.
+ * INVARIANT: only explicit replay mode may return simulated fills. Live quote publication
+ * returns `simulated: false` and never produces fills or realized PnL.
  */
 
 export type ExternalOwner = string;
@@ -33,7 +32,7 @@ export interface Fill {
   readonly priceMilliOdds: number;
   readonly sizeUnits: number;
   readonly counterparty: ExternalOwner;
-  /** Always true under the simulated book; explicit for the ledger + dashboard. */
+  /** True only under explicit replay matching. */
   readonly simulated: boolean;
 }
 

@@ -1,10 +1,11 @@
 # GROUND-TRUTH.md — execution & feed facts (Phase 2 gate)
 
 The deliverable of Phase 2. **Phases 5/6/7 design against these facts, not assumptions.**
-All citations are to the vendored sponsor repo at commit `f37473a` ("Schedule update",
-2026-07-12); paths are relative to `resources/tx-on-chain/`. Anything marked
-**UNCONFIRMED** is documented-but-untested here and must be re-verified against a live
-endpoint or the hosted OpenAPI (`https://txline.txodds.com/docs/docs.yaml`) before relied on.
+The research snapshot reviewed the sponsor repo at commit `f37473a` ("Schedule update",
+2026-07-12). That third-party repository is not vendored here; its matching program IDL is
+retained at `apps/daemon/idls/txoracle.json`, and current public documentation lives at
+<https://txline.txodds.com/documentation>. Anything marked **UNCONFIRMED** must be
+re-verified against a live endpoint or the hosted API reference before it is relied on.
 
 ---
 
@@ -44,12 +45,11 @@ field is **decimal × 1000** (`odds: 2000` = 2.0; `README.md:744`). On-chain `Od
 are `vec<i32>`, also decimal ×1000. TISSUE uses **MilliOdds = decimal×1000** throughout
 (`packages/shared/src/units.ts`), aligning our internal encoding with the sponsor's.
 
-### Resolution — decision D-001 (see HANDOFF.md)
-`exec/` is a **port**. Provenance anchoring uses the **real** `validate_odds`/`validate_stat`
-CPIs (permissionless, callable today). Matching/fills run through an internal
-**simulated maker book, labeled `simulated` everywhere it surfaces**. A future real
-orderbook swaps in behind the same boundary. This preserves fill-independence (PRD §1.4):
-CLV grades every quote against the close whether matched or not.
+### Resolution — decision D-001 (updated 2026-07-13)
+Live mode publishes risk-approved quotes through a real daemon API and never invents a
+counterparty, fill, or PnL. Deterministic simulated matching exists only in explicit replay
+research. A future real orderbook swaps in behind the same execution port. CLV remains
+fill-independent and grades every quote against the close.
 
 ---
 
@@ -148,22 +148,20 @@ encoded u16 LE. **Verify the seed on-chain before relying on it** (naming mismat
 `validate_stat` / `validate_fixture` (both `-> bool`, `onchain-validation.mdx:222-247`): a
 **bad Merkle proof reverts** (e.g. `InvalidMainTreeProof`), while a valid inclusion **returns
 `true`**. `validate_odds` has no predicate arg (it only proves inclusion), so the expected
-behavior is "returns `true` on valid inclusion, reverts on a bad proof." Called read-only via
-Anchor `.view()` or `.transaction()` + `simulateTransaction`. **CU cost: UNMEASURED** — no
-runnable odds example; measure on first live call.
+behavior is "returns `true` on valid inclusion, reverts on a bad proof." Live view mode calls
+Anchor `.view()`; transaction mode calls `.rpc()` and refuses to report success until the
+signature is present at confirmed/finalized commitment. **CU cost: UNMEASURED** — record it
+with the next credentialed live proof.
 
-### Fetching proofs (**UNCONFIRMED endpoint**)
-No odds-proof REST endpoint is documented. The analogous documented ones are
-`GET /api/scores/stat-validation?fixtureId=&seq=&statKey=` and
-`GET /api/fixtures/validation?fixtureId=&timestamp=`, each returning
-`{ summary, subTreeProof, mainTreeProof, ... }`. The odds endpoint **likely** mirrors these
-(probably `GET /api/odds/validation?fixtureId=&timestamp=` returning
-`{ odds, summary, subTreeProof, mainTreeProof }`) — **verify against the hosted OpenAPI**.
+### Fetching proofs (confirmed from current hosted API reference, 2026-07-13)
+`GET /api/odds/validation?messageId={messageId}&ts={ts}` returns
+`{ odds, summary, subTreeProof, mainTreeProof }`. It requires both JWT and API token.
+Implemented in `apps/daemon/src/exec/anchorLive.ts` with strict response identity/hash checks.
 
-### What TISSUE anchors
-The ledger anchors **sampled** decision inputs by calling `validate_odds` with the odds
-snapshot + fetched proofs (`policy.toml exec.anchor_sample_rate`). Anchoring is the *real*,
-permissionless pillar of "the backtest can't lie" even while matching is simulated.
+### What TISSUE verifies
+Live odds inputs fetch their own proof and call `validate_odds`. `view` mode provides a real
+on-chain simulation result; `transaction` mode submits the instruction and stores its confirmed
+signature. Failures remain explicit evidence. Replay never claims a live verification.
 
 ---
 
@@ -176,9 +174,10 @@ permissionless pillar of "the backtest can't lie" even while matching is simulat
 - Completed QF fixture ids (sponsor schedule, `documentation/scores/schedule.mdx`):
   `18209181` FRA 2-0 MAR · `18218149` ESP 2-1 BEL · `18213979` NOR 1-2 ENG ·
   `18222446` ARG 3-1 SUI. World Cup `competitionId=72`.
-- Until activation is wired, the **deterministic synthetic corpus**
-  (`apps/daemon/src/ingest/synthetic.ts`, `corpus/SYN-QF1.jsonl`) is the guaranteed input for
-  pricing tests and replay-equality CI.
+- Activated credentials are mandatory for real capture. The live daemon records both SSE
+  channels into fixture corpora and never falls back when authentication or the network fails.
+- `apps/daemon/src/ingest/synthetic.ts` is a deterministic fixture used only by tests and the
+  explicit replay command; `evaluate:real` rejects it.
 
 ## Soccer scores encoding (`documentation/scores/soccer-feed.mdx`)
 - Stat keys 1-8: P1/P2 goals(1,2), yellows(3,4), **reds(5,6)**, corners(7,8). Period prefixes

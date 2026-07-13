@@ -33,7 +33,7 @@ export interface AuthCredentials {
 }
 
 export async function fetchGuestJwt(origin: string): Promise<string> {
-  const res = await fetch(`${origin}/auth/guest/start`, { method: "POST" });
+  const res = await fetch(`${origin}/auth/guest/start`, { method: "POST", signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`guest JWT failed: ${res.status} ${res.statusText}`);
   const body = (await res.json()) as { token?: string };
   if (!body.token) throw new Error("guest JWT response missing token");
@@ -56,12 +56,33 @@ export async function activateToken(
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${jwt}` },
     body: JSON.stringify({ txSig, walletSignature, leagues }),
+    signal: AbortSignal.timeout(20_000),
   });
   if (!res.ok) throw new Error(`activate failed: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as { token?: string } | string;
-  const token = typeof data === "string" ? data : data.token;
+  const token = parseActivationToken(await res.text());
   if (!token) throw new Error("activation response missing token");
   return token;
+}
+
+/** Live TxLINE has returned both plain text and JSON across releases; accept only real token values. */
+export function parseActivationToken(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed) as { token?: unknown } | unknown;
+    if (typeof parsed === "string") return validActivationToken(parsed);
+    if (parsed && typeof parsed === "object" && typeof (parsed as { token?: unknown }).token === "string") {
+      return validActivationToken((parsed as { token: string }).token);
+    }
+    return "";
+  } catch {
+    return validActivationToken(trimmed);
+  }
+}
+
+function validActivationToken(value: string): string {
+  const token = value.trim();
+  return /^txoracle_api_[A-Za-z0-9._~-]+$/.test(token) ? token : "";
 }
 
 export function authHeaders(creds: AuthCredentials): Record<string, string> {

@@ -1,5 +1,4 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z, type ZodRawShape } from "zod";
 import { ReadOnlyLedgerDb } from "./db.js";
 import { TOOL_BY_NAME } from "./tools.js";
@@ -14,9 +13,9 @@ import { DB_PATH } from "./paths.js";
  */
 
 const INPUT_SHAPES: Record<string, ZodRawShape> = {
-  get_recent_decisions: { fixture_id: z.string().optional(), limit: z.number().optional() },
-  get_signal_class_stats: { signal_class: z.string().optional(), fixture_id: z.string().optional() },
-  query_ledger_by_fixture: { fixture_id: z.string() },
+  get_recent_decisions: { fixture_id: z.string().max(128).optional(), limit: z.number().int().min(1).max(200).optional() },
+  get_signal_class_stats: { signal_class: z.string().max(64).optional(), fixture_id: z.string().max(128).optional() },
+  query_ledger_by_fixture: { fixture_id: z.string().min(1).max(128) },
 };
 
 export function buildMcpServer(dbPath: string = DB_PATH): { server: McpServer; db: ReadOnlyLedgerDb } {
@@ -34,17 +33,4 @@ export function buildMcpServer(dbPath: string = DB_PATH): { server: McpServer; d
     );
   }
   return { server, db };
-}
-
-async function main(): Promise<void> {
-  const { server } = buildMcpServer();
-  await server.connect(new StdioServerTransport());
-  console.error("[analyst-mcp] tissue-analyst MCP server on stdio (read-only)");
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
 }

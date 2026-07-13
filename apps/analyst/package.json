@@ -6,8 +6,8 @@
   "description": "TISSUE analyst layer — read-only narration over the hash-chained ledger. Never decides.",
   "scripts": {
     "materialize": "tsx src/materializeCli.ts",
-    "mcp": "tsx src/mcp.ts",
-    "serve": "tsx src/server.ts",
+    "mcp": "tsx src/mcpCli.ts",
+    "serve": "tsx src/serverCli.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit"

@@ -58,7 +58,7 @@ function largestRemainder(probs: Record<string, number>): ProbVector {
   const sum = keys.reduce((s, k) => s + probs[k]!, 0) || 1;
   const scaled = keys.map((k) => ({ k, exact: (probs[k]! / sum) * 10000 }));
   const floored = scaled.map((s) => ({ ...s, floor: Math.floor(s.exact), rem: s.exact - Math.floor(s.exact) }));
-  let remaining = 10000 - floored.reduce((s, f) => s + f.floor, 0);
+  const remaining = 10000 - floored.reduce((s, f) => s + f.floor, 0);
   floored.sort((a, b) => b.rem - a.rem);
   const out: Record<string, Bps> = {};
   for (let i = 0; i < floored.length; i++) {

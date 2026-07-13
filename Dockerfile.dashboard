@@ -1,0 +1,33 @@
+FROM node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5 AS base
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
+WORKDIR /app
+
+FROM base AS build
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/dashboard/package.json apps/dashboard/package.json
+COPY apps/daemon/package.json apps/daemon/package.json
+COPY apps/analyst/package.json apps/analyst/package.json
+COPY packages/shared/package.json packages/shared/package.json
+RUN pnpm install --frozen-lockfile
+COPY packages/shared ./packages/shared
+COPY apps/dashboard ./apps/dashboard
+RUN mkdir -p apps/dashboard/public
+RUN pnpm --filter @tissue/dashboard build
+
+FROM node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5 AS runtime
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+WORKDIR /app
+COPY --from=build --chown=node:node /app/apps/dashboard/.next/standalone ./
+COPY --from=build --chown=node:node /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
+COPY --from=build --chown=node:node /app/apps/dashboard/public ./apps/dashboard/public
+EXPOSE 3000
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+USER node
+CMD ["node", "apps/dashboard/server.js"]

@@ -11,7 +11,7 @@ import { normalizeOdds, normalizeScores } from "./normalize.js";
  */
 
 async function getJson(url: string, creds: AuthCredentials): Promise<unknown[]> {
-  const res = await fetch(url, { headers: authHeaders(creds) });
+  const res = await fetch(url, { headers: authHeaders(creds), signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`GET ${url} → ${res.status} ${res.statusText}`);
   const body = await res.json();
   return Array.isArray(body) ? body : [body];

@@ -1,5 +1,5 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FeedMessage } from "@tissue/shared";
 
@@ -9,7 +9,10 @@ import type { FeedMessage } from "@tissue/shared";
  * pricing property tests, and the reason `replay(corpus) === ledger` can be asserted.
  */
 
-export const CORPUS_DIR = fileURLToPath(new URL("../../../../corpus/", import.meta.url));
+export const CORPUS_DIR = process.env.TISSUE_CORPUS_DIR
+  ?? (process.cwd().endsWith("/tissue")
+    ? resolve(process.cwd(), "corpus")
+    : fileURLToPath(new URL("../../../../corpus/", import.meta.url)));
 
 export function corpusPath(fixtureId: string): string {
   return join(CORPUS_DIR, `${fixtureId}.jsonl`);
@@ -28,7 +31,9 @@ export function appendToCorpus(fixtureId: string, msg: FeedMessage): void {
 export function writeCorpus(fixtureId: string, msgs: readonly FeedMessage[]): string {
   const path = corpusPath(fixtureId);
   ensureCorpusDir(path);
-  writeFileSync(path, msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf8");
+  const temp = `${path}.${process.pid}.tmp`;
+  writeFileSync(temp, msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf8");
+  renameSync(temp, path);
   return path;
 }
 

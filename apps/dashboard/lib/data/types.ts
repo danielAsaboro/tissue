@@ -10,9 +10,8 @@ import type {
 
 /**
  * Dashboard data seam (PRD Phase 0). Components consume ONLY these interfaces — they
- * never import daemon internals or read the ledger directly. The mock adapter powers
- * the headless skeleton today; a live adapter (SSE/HTTP over the daemon's flight
- * recorder) drops in behind the same interface later.
+ * never import daemon internals or read the ledger directly. Production resolves this
+ * interface through the daemon's read-only HTTP evidence API.
  */
 
 export interface TissueVsMarketPoint {
@@ -38,12 +37,12 @@ export interface QuoteTapeRow {
   readonly priceMilliOdds: number;
   readonly sizeUnits: number;
   readonly status: string;
-  /** Surfaced verbatim in the UI: a simulated fill is badged 'SIM', never hidden. */
+  /** True only for explicit replay data. Live quote publication is always false. */
   readonly simulated: boolean;
 }
 
 export interface HaltState {
-  readonly active: boolean;
+  readonly kind: "waiting" | "verifying" | "watching" | "quoting" | "halted" | "error";
   readonly reason?: string;
   readonly sinceMsgId?: string;
 }
@@ -60,6 +59,18 @@ export interface ReplayControl {
   readonly cursorMsgId?: string;
 }
 
+export interface AnchorEvidenceRow {
+  readonly messageId: string;
+  readonly ts: number;
+  readonly method: "view" | "transaction";
+  readonly status: "verified" | "confirmed" | "rejected" | "failed";
+  readonly result: boolean;
+  readonly rootPda: string;
+  readonly programId: string;
+  readonly txSig?: string;
+  readonly error?: string;
+}
+
 /** Everything the dashboard needs, behind one swappable seam. */
 export interface DashboardData {
   readonly network: Network;
@@ -72,6 +83,7 @@ export interface DashboardData {
   getDecisionFeed(): Promise<readonly DecisionRecord[]>;
   /** Recompute the hash chain over the decision feed; true iff it verifies. */
   verifyHashChain(): Promise<{ ok: boolean; brokenAtSeq?: number }>;
-  getGradeSheet(): Promise<GradeSheet>;
+  getGradeSheet(): Promise<GradeSheet | null>;
   getReplayControl(): Promise<ReplayControl>;
+  getAnchorEvidence(): Promise<readonly AnchorEvidenceRow[]>;
 }

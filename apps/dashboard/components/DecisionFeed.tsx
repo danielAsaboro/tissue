@@ -21,7 +21,7 @@ export function DecisionFeed({ records }: { records: readonly DecisionRecord[] }
           <th>Class</th>
           <th className="num">Edge</th>
           <th className="num">Intents</th>
-          <th>Book</th>
+          <th>Output</th>
           <th>Hash</th>
         </tr>
       </thead>
@@ -34,7 +34,7 @@ export function DecisionFeed({ records }: { records: readonly DecisionRecord[] }
             <td>{record.radarClass ? <ClassBadge signalClass={record.radarClass} /> : <span className="muted">·</span>}</td>
             <td className="num">{formatBpsSigned(record.edgeBps)}</td>
             <td className="num">{record.intents.length}</td>
-            <td>{record.simulated ? <SimBadge /> : <span className="muted">real</span>}</td>
+            <td>{record.simulated ? <SimBadge /> : <span className="badge badge-ok">APPROVED OUTPUT</span>}</td>
             <td className="muted">{record.hash.slice(0, 10)}…</td>
           </tr>
         ))}

@@ -43,7 +43,7 @@ export async function runAnalystQuery(
 
   for (let round = 0; round < maxRounds; round++) {
     const result = await llm.chat(messages, tools);
-    providers.push({ provider: result.provider, fellBack: false });
+    providers.push({ provider: result.provider, fellBack: result.fellBack });
     const msg = result.message;
     messages.push({ role: "assistant", content: msg.content ?? "", ...(msg.tool_calls ? { tool_calls: msg.tool_calls } : {}) });
 

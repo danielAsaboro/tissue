@@ -41,6 +41,9 @@ export interface QuoteRecord {
   readonly side: "BACK" | "LAY";
   readonly quoteMilliOdds: number;
   readonly quoteProbBps: number;
+  readonly sizeUnits: number;
+  /** Exact TxLINE odds record supporting this quote, even when a score message triggered repricing. */
+  readonly sourceOddsMsgId: string;
   readonly radarClass: RadarClass | undefined;
   matched: boolean;
 }
@@ -84,6 +87,11 @@ export interface EngineOptions {
    */
   readonly initialKilled?: boolean;
   /**
+   * Replay-only fill simulation. Live quote publication sets this false: quotes are real
+   * outputs, but no counterparty fill or PnL is invented when no venue exists.
+   */
+  readonly simulateFills?: boolean;
+  /**
    * Fault injector for the exec submission path (default: always "ok"). Returns the on-chain
    * outcome for a market's posts this tick. "congested" escalates the priority-fee ladder and
    * skips the tick (retry next at a higher fee); ladder exhaustion HALTs the market. "failed"
@@ -93,16 +101,25 @@ export interface EngineOptions {
   readonly submitFault?: (marketKey: string, msgId: string) => SubmitOutcome;
 }
 
-export function runEngine(
-  corpus: readonly FeedMessage[],
+export interface EngineSession {
+  /** Append exactly one ordered feed message using the same state machine as replay. */
+  append(message: FeedMessage): EngineResult;
+  /** Current unfinalized view. Safe for live dashboards; does not close Radar windows. */
+  current(): EngineResult;
+  /** Close trailing Radar windows and simulated settlement. No messages may follow. */
+  finish(): EngineResult;
+}
+
+export function createEngineSession(
   policy: Policy,
   network: Network = "devnet",
   opts: EngineOptions = {},
-): EngineResult {
+): EngineSession {
   const feedGapHalt = opts.feedGapHalt ?? false;
+  const simulateFills = opts.simulateFills ?? true;
   const ledger = new Ledger();
   const radar = new Radar(policy);
-  const book = new SimulatedBook();
+  const book = new SimulatedBook(simulateFills);
   const exposure = new ExposureTracker(policy.risk.exposure_cap_per_fixture_units);
   const state = new MatchState(policy);
   const market = new Map<string, OddsMessage>();
@@ -119,12 +136,19 @@ export function runEngine(
   let voided = false;
   let openingHome: OddsMessage | null = null;
   let openingTotals: OddsMessage | null = null;
-  const fixtureId = corpus.find((m) => m)?.fixtureId ?? "UNKNOWN";
+  let fixtureId = "UNKNOWN";
+  let finalScore = { home: 0, away: 0 };
+  let finalized = false;
   let anchorTick = 0;
   const ladders = new Map<string, FeeLadder>();
   const txRetries = new Map<string, number>();
 
-  for (const msg of corpus) {
+  const append = (msg: FeedMessage): EngineResult => {
+    if (finalized) throw new Error("cannot append to a finalized engine session");
+    if (fixtureId === "UNKNOWN") fixtureId = msg.fixtureId;
+    if (msg.fixtureId !== fixtureId) {
+      throw new Error(`engine session fixture mismatch: expected ${fixtureId}, received ${msg.fixtureId}`);
+    }
     // Inter-message staleness (data-driven, deterministic). Widens spreads always; only
     // hard-halts when feedGapHalt is enabled (live / chaos drill).
     const stalenessMs = prevTs == null ? 0 : Math.max(0, msg.ts - prevTs);
@@ -136,13 +160,16 @@ export function runEngine(
 
     if (msg.kind === "score") {
       state.applyScore(msg);
+      finalScore = { home: msg.homeScore, away: msg.awayScore };
       if (msg.isVoid) voided = true;
     } else if (!voided) {
       market.set(marketKeyString(msg.marketKey), msg);
       if (msg.marketKey.market === "1X2" && !openingHome) openingHome = msg;
       if (msg.marketKey.market === "TOTALS" && !openingTotals) openingTotals = msg;
-      if (!pricer && openingHome) pricer = buildPricer(openingHome, openingTotals, policy);
-      simulateExternalFlow(book, msg, exposure, quotes);
+      if (!pricer && (openingHome || openingTotals)) {
+        pricer = buildPricer(openingHome, openingTotals, policy);
+      }
+      if (simulateFills) simulateExternalFlow(book, msg, exposure);
       if (shouldAnchor(policy, anchorTick++)) anchors.push(prepareOddsAnchor(network, msg.ts));
     }
 
@@ -152,13 +179,13 @@ export function runEngine(
         const c = book.cancelIntent(i.id);
         if (c) exposure.upsertOpen(c);
       }
-      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "HALT", undefined, "match-void", bps(0), bps(0), 0, []);
-      continue;
+      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "HALT", undefined, "match-void", bps(0), bps(0), 0, [], simulateFills);
+      return current();
     }
 
     if (!pricer) {
-      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "NO_ACTION", undefined, undefined, bps(0), bps(0), 0, []);
-      continue;
+      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "NO_ACTION", undefined, undefined, bps(0), bps(0), 0, [], simulateFills);
+      return current();
     }
 
     const priced = pricer.price(state.tissueState(msg.ts));
@@ -224,6 +251,8 @@ export function runEngine(
           quotes.push({
             msgId: msg.msgId, ts: msg.ts, marketKey: k, selection: p.selection, side: p.side,
             quoteMilliOdds: p.priceMilliOdds, quoteProbBps: probBpsFromMilliOdds(p.priceMilliOdds),
+            sizeUnits: p.sizeUnits,
+            sourceOddsMsgId: market.get(k)?.msgId ?? msg.msgId,
             radarClass: p.radarClass, matched: false,
           });
         }
@@ -265,32 +294,65 @@ export function runEngine(
       top ? top.marketProb : bps(0),
       top ? top.edgeBps : 0,
       posted,
+      simulateFills,
     );
-  }
+    return current();
+  };
 
-  // Flush any open Radar reaction so its event (e.g. a trailing goal/correction reaction) is
-  // captured — otherwise the last reaction of the match is silently lost.
-  const flushOut = radar.flush((prevTs ?? 0) + policy.radar.unexplained_window_ms + 1);
-  radarEvents.push(...flushOut.events);
-  halts.push(...flushOut.halts);
+  const current = (): EngineResult => ({
+    fixtureId,
+    ledger,
+    radarEvents,
+    halts,
+    anchors,
+    book,
+    quotes,
+    forecasts,
+    finalScore: { ...finalScore },
+    voided,
+    closingMarket: market,
+  });
 
-  const finalScore = lastScore(corpus);
-  // Void matches never settle on the (phantom) score — positions are refunded, PnL is 0.
-  const settlement = voided
-    ? { perIntentPnlUnits: {}, totalPnlUnits: 0, simulated: true }
-    : book.settle(finalScore.home, finalScore.away);
-  exposure.onSettle(settlement.totalPnlUnits);
-  markMatchedQuotes(book, quotes);
+  const finish = (): EngineResult => {
+    if (!finalized) {
+      // Flush any open Radar reaction so a trailing goal/correction reaction is retained.
+      const flushOut = radar.flush((prevTs ?? 0) + policy.radar.unexplained_window_ms + 1);
+      radarEvents.push(...flushOut.events);
+      halts.push(...flushOut.halts);
+      const settlement = voided
+        ? { perIntentPnlUnits: {}, totalPnlUnits: 0, simulated: simulateFills }
+        : book.settle(finalScore.home, finalScore.away);
+      exposure.onSettle(settlement.totalPnlUnits);
+      markMatchedQuotes(book, quotes);
+      finalized = true;
+    }
+    return current();
+  };
 
-  return { fixtureId, ledger, radarEvents, halts, anchors, book, quotes, forecasts, finalScore, voided, closingMarket: market };
+  return { append, current, finish };
 }
 
-function buildPricer(home: OddsMessage, totals: OddsMessage | null, policy: Policy): TissuePricer {
-  const h = home.consensus;
+export function runEngine(
+  corpus: readonly FeedMessage[],
+  policy: Policy,
+  network: Network = "devnet",
+  opts: EngineOptions = {},
+): EngineResult {
+  const session = createEngineSession(policy, network, opts);
+  for (const message of corpus) session.append(message);
+  return session.finish();
+}
+
+function buildPricer(home: OddsMessage | null, totals: OddsMessage | null, policy: Policy): TissuePricer {
+  const h = home?.consensus;
   const inp = {
-    home: (h["HOME"] ?? 0) / 10000,
-    draw: (h["DRAW"] ?? 0) / 10000,
-    away: (h["AWAY"] ?? 0) / 10000,
+    ...(h
+      ? {
+          home: (h["HOME"] ?? 0) / 10000,
+          draw: (h["DRAW"] ?? 0) / 10000,
+          away: (h["AWAY"] ?? 0) / 10000,
+        }
+      : {}),
     ...(totals ? { totals: { line: (totals.marketKey.lineTimes10 ?? 25) / 10, over: (totals.consensus["OVER"] ?? 0) / 10000 } } : {}),
   };
   return new TissuePricer(inp, policy);
@@ -339,7 +401,6 @@ function simulateExternalFlow(
   book: SimulatedBook,
   msg: OddsMessage,
   exposure: ExposureTracker,
-  quotes: QuoteRecord[],
 ): void {
   const key = marketKeyString(msg.marketKey);
   for (const intent of book.openIntents()) {
@@ -381,14 +442,6 @@ function markMatchedQuotes(book: SimulatedBook, quotes: QuoteRecord[]): void {
   }
 }
 
-function lastScore(corpus: readonly FeedMessage[]): { home: number; away: number } {
-  for (let i = corpus.length - 1; i >= 0; i--) {
-    const m = corpus[i]!;
-    if (m.kind === "score") return { home: m.homeScore, away: m.awayScore };
-  }
-  return { home: 0, away: 0 };
-}
-
 function appendRecord(
   ledger: Ledger,
   msg: FeedMessage,
@@ -403,6 +456,7 @@ function appendRecord(
   marketProb: ReturnType<typeof bps>,
   edgeBps: number,
   intents: readonly Intent[],
+  simulated: boolean,
 ): void {
   ledger.append({
     triggerMsgId: msg.msgId,
@@ -426,6 +480,6 @@ function appendRecord(
     marketProb,
     edgeBps,
     intents,
-    simulated: true,
+    simulated,
   });
 }

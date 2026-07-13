@@ -1,64 +1,124 @@
 # RUNBOOK — TISSUE desk operations
 
-The production-readiness artifact (PRD §9). How to deploy, halt, and recover the desk.
-Voice: instrument-calm. "Quoting." "Halted — feed gap." "Graded."
+## Preconditions
 
-## Deploy
+1. Node 24 and pnpm 10.33, or Docker with Compose.
+2. A real activated TxLINE subscription matching `TISSUE_NETWORK`.
+3. `TXLINE_JWT` + `TXLINE_API_TOKEN`, or a credential file written by
+   `apps/daemon/scripts/liveActivate.ts`.
+4. A matching Solana RPC. Transaction anchoring additionally requires a funded keypair.
 
-```bash
-pnpm install
-cp .env.example .env            # fill TISSUE_KEYPAIR_PATH + RPC + TxLINE origins
-pnpm --filter @tissue/daemon test:run   # 69 tests incl. replay-equality CI
-pnpm replay                     # backtest/demo over corpus/SYN-QF1.jsonl
-pnpm daemon                     # run the engine (replay mode until live creds present)
-```
+Copy `.env.example` to `.env`. Live startup fails with a precise error when required
+configuration is absent; it never falls back to replay or sample data.
 
-Docker/Railway: the daemon is a single stateless process reading `policy.toml` + the corpus/
-live feed. State is rebuildable from the ledger + corpus (see Recover).
-
-## Preconditions for LIVE (vs replay)
-
-1. `TISSUE_KEYPAIR_PATH` points to a funded **devnet** wallet (for `subscribe` + anchoring).
-2. On-chain `subscribe(service_level_id=1, weeks=4)` submitted, then `/api/token/activate`
-   signed → an `X-Api-Token`. Without this, snapshot/stream calls 401 (GROUND-TRUTH auth chain).
-3. Mainnet realtime (level 12) is optional and needs **real SOL**; if activation is rejected,
-   the desk falls back to devnet-only pricing (in_play spreads widen; see policy).
-
-## Halt controls (all automated — no human in the loop)
-
-The engine halts itself; these are the triggers and what an operator does about each.
-
-| Halt | Trigger | Engine action | Operator action |
-|------|---------|---------------|-----------------|
-| **Feed gap** | inter-message gap ≥ `feed.max_gap_ms` | cancel all intents, SAFE | none; auto-resumes when feed returns |
-| **Unexplained movement** | odds move ≥ `radar.unexplained_bps` with no event in `unexplained_window_ms` | pull quotes on that market | inspect; it means the market knows something the feed hasn't shown |
-| **Model divergence** | \|tissue − market\| > `risk.model_divergence_band_bps` | pull + flag that market | check the model; protects against our own failure |
-| **Drawdown kill** | drawdown ≥ `risk.drawdown_kill_units` | halt everything, **latched** | **operator restart required** — never auto-resumes |
-
-Manual halt: stop the process (all intents are cancellable; residual refunds on cancel).
-Change any threshold in `policy.toml` and restart — nothing is hard-coded.
-
-## Recover (crash / restart)
-
-1. **Rebuild state** from the corpus/ledger: `pnpm replay <fixtureId>` replays the exact
-   decision chain; `verifyChain` confirms the ledger is intact (reports the break seq if not).
-2. **Reconcile on-chain**: cancel any stale intents (simulated book resets on restart; a real
-   orderbook would be reconciled against open intents by id).
-3. **Resume-or-halt per policy**: if the drawdown kill was latched, the desk stays halted
-   until an operator clears it deliberately.
-
-## Verify integrity (anytime)
+## Start
 
 ```bash
-pnpm replay <fixtureId>   # prints: hash chain OK · determinism OK · head hash
+pnpm install --frozen-lockfile
+pnpm run ci
+pnpm run build
+
+TISSUE_MODE=live pnpm run daemon
+TISSUE_DAEMON_URL=http://127.0.0.1:8788 pnpm --filter @tissue/dashboard start
+# Optional narration surface; requires GROQ_API_KEY and/or DGRID credentials.
+pnpm --filter @tissue/analyst serve
 ```
-`replay(corpus) === ledger` is asserted in CI — a mismatch fails the build. The dashboard's
-"Verify hash chain" button runs the same check live.
 
-## Key invariants (do not break)
+Or:
 
-- The pricing core reads no wall-clock and does no I/O — message-id/feed-ts ordering only.
-- Every tunable lives in `policy.toml`. No magic numbers in logic.
-- The **risk module is the only** module that green-lights execution.
-- Matching is **simulated** and labeled `simulated` everywhere until the real orderbook lands.
-- Anchoring (`validate_odds`) is **real** and same-network as the money (devnet).
+```bash
+docker compose up --build
+```
+
+Container build stages compile the daemon and analyst. Final images contain no TypeScript test or
+build toolchain; `pnpm verify:runtime` exercises the exact compiled entry points before deployment.
+After the images exist, `pnpm verify:containers` checks their non-root users, pruned contents,
+daemon fail-closed startup, analyst health/metrics, dashboard security headers, and current
+evidence copy over ephemeral loopback ports. It does not push or deploy.
+
+## Health and evidence
+
+```bash
+curl http://127.0.0.1:8788/health
+curl http://127.0.0.1:8788/ready
+curl http://127.0.0.1:8788/verify
+curl http://127.0.0.1:8788/state
+curl http://127.0.0.1:8788/metrics
+```
+
+- `/health` proves the process is alive even while waiting for a match.
+- `/ready` is `503` until real feed data has arrived, at least one source proof has passed,
+  and all hard gates are clear.
+- `/state` is the dashboard source of truth; it carries no credentials or private keys.
+- `/verify` recomputes every persisted decision link.
+- The analyst `/health` endpoint on port `8787` reports `ready: true` only when an LLM
+  provider and at least one real live export are available. It ignores `SYN-*` fixtures.
+- Daemon and analyst `/metrics` endpoints expose no labels derived from user/feed input. Alert on
+  sustained source-proof/stream failures, analyst 429s/failures, and unexpected provider fallback.
+- Compose rotates JSON logs at 10 MiB with five files per service. A private deployment must ship
+  those structured logs and metrics to its durable provider before unattended operation.
+
+## Automated halt behavior
+
+| Trigger | Action | Resume |
+|---|---|---|
+| Score or odds stream gap ≥ `feed.max_gap_ms` | Publish no active quotes; status `halted` | Automatic after both streams recover |
+| Unexplained market movement | Cancel recommendations for that market | Next explained/safe state |
+| Model divergence | Cancel affected market recommendations | Next in-band price |
+| Drawdown kill in replay venue research | Halt all, latch across restart | Deliberate operator restart only |
+| Match void/abandonment | Cancel all recommendations; zero settlement | Never settles phantom score |
+
+## Solana validation modes
+
+- `TISSUE_ANCHOR_MODE=view`: fetch the real TxLINE proof and execute `validate_odds`
+  through Solana RPC simulation. No signature is claimed.
+- `TISSUE_ANCHOR_MODE=transaction`: run the view first, then submit and confirm the same
+  validation instruction. Requires `TISSUE_KEYPAIR_PATH`; the dashboard links the signature.
+
+Public state exposes only a generic proof failure; exact endpoint/RPC/account diagnostics stay
+in operator logs. Neither a score nor an odds message is committed to the live corpus or allowed
+to affect a quote until its validation succeeds. On recovery, persisted messages are freshly
+revalidated instead of trusting the locally stored receipt.
+
+The live admission queue verifies all four decision-driving cumulative score stats (home/away
+goals and red cards) through `validate_stat` against `daily_scores_roots`. The separate command
+below captures credentialed evidence for a current sequenced fixture:
+
+```bash
+TISSUE_MODE=live pnpm --filter @tissue/daemon verify:score-source -- <fixtureId>
+```
+
+Do not claim a successful live score proof until this command or the daemon has observed one on
+current data; the implementation fails closed when credentials, sequence IDs, roots, or proofs
+are unavailable.
+
+## Recover
+
+The live recorder appends normalized messages to `corpus/{fixtureId}.jsonl` and atomically
+writes `corpus/live-state.json`. Each admitted update advances one in-memory deterministic
+engine session and appends exactly one hash-chained ledger record; it does not replay or rewrite
+the prior decision history. On restart, the next message loads the existing corpus, freshly
+revalidates every persisted source record, deduplicates by TxLINE message ID, reconstructs the
+same head hash, verifies any existing ledger prefix, and appends only a missing deterministic
+suffix before publishing.
+
+Verify any fixture independently:
+
+```bash
+pnpm run replay -- <fixtureId>
+```
+
+## Evaluate real matches
+
+```bash
+pnpm run evaluate:real
+```
+
+The evaluator rejects `SYN-*` and ledger files. It reports per-fixture and aggregate CLV,
+Brier score, market baseline where 1X2 exists, pressure-ablation CLV, message/quote counts,
+and the decision-chain head. No result is produced if no real corpus is available.
+
+## Teardown
+
+Send `SIGTERM` or `SIGINT`. The daemon stops both stream clients and closes the HTTP server.
+With Compose, use `docker compose down`; keep the named corpus volume for recovery evidence.

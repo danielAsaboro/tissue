@@ -5,26 +5,39 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       # pnpm version comes from packageManager in package.json (do not also pin it here,
       # or action-setup errors with ERR_PNPM_BAD_PM_VERSION).
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           # Node 24: node:sqlite (used by the analyst read-model) is unflagged here; on 22 it
           # still needs --experimental-sqlite.
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Production dependency policy: known moderate-or-higher advisories fail the build.
+      - run: pnpm audit --prod --audit-level moderate
+      - run: pnpm lint
       # typecheck every package (shared + daemon + dashboard)
       - run: pnpm -r typecheck
       # pricing units, risk property tests, replay-equality CI, chaos drills
       - run: pnpm --filter @tissue/daemon test:run
       # analyst layer: read-only-by-construction + statelessness + LLM fallback
       - run: pnpm --filter @tissue/analyst test:run
+      # Compile the deployable dashboard, not only its isolated type graph.
+      - run: pnpm build
+      # Exercise the compiled daemon and standalone analyst artifacts without tsx/dev tooling.
+      - run: pnpm verify:runtime
       # determinism smoke: replay must reproduce an intact, deterministic ledger
       - run: pnpm --filter @tissue/daemon replay
+      # Deployment artifacts are part of the product surface and must remain buildable.
+      - run: docker compose config
+      - run: docker compose build

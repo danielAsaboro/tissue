@@ -1,0 +1,51 @@
+name: Private release artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.service }} OCI artifact
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: daemon
+            dockerfile: Dockerfile.daemon
+          - service: analyst
+            dockerfile: Dockerfile.analyst
+          - service: dashboard
+            dockerfile: Dockerfile.dashboard
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build private OCI image with attestations
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: tissue/${{ matrix.service }}:${{ github.sha }}
+          outputs: type=oci,dest=/tmp/tissue-${{ matrix.service }}.tar
+          provenance: mode=max
+          sbom: true
+      - name: Record immutable artifact digest
+        shell: bash
+        run: sha256sum /tmp/tissue-${{ matrix.service }}.tar > /tmp/tissue-${{ matrix.service }}.sha256
+      - name: Retain private release evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: tissue-${{ matrix.service }}-${{ github.sha }}
+          path: |
+            /tmp/tissue-${{ matrix.service }}.tar
+            /tmp/tissue-${{ matrix.service }}.sha256
+          if-no-files-found: error
+          retention-days: 14

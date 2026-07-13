@@ -1,52 +1,102 @@
 # TISSUE
 
-**Autonomous in-play trading desk with a latency radar and a backtest that can't lie.**
+**Autonomous in-play fair-value and quote-policy service powered by live TxLINE data.**
 
-Tissue builds its own fair price for every live World Cup market from the match itself —
-goals, cards, minute, pressure — quotes both sides on-chain when the market disagrees,
-refuses to trade against information it can't see, and grades itself in public with a
-proof-chained log.
+Tissue consumes TxLINE score and StablePrice streams, freezes an opening goals model,
+reprices from match state, publishes risk-approved two-sided quote recommendations, halts
+when the feed or market becomes unsafe, and records every decision in a deterministic
+hash chain. Live mode never invents counterparties, fills, or PnL.
 
 > TxLINE turns live sports into verifiable state. **Tissue prices it.**
 
+## What is real
+
+- Dual authenticated TxLINE SSE clients with reconnect, JWT renewal, `Last-Event-ID`,
+  dedupe, and independent feed-gap watchdogs.
+- A deterministic Poisson + Dixon-Coles in-play pricing core. It can bootstrap from the
+  free tier's totals-only bundle; 1X2 improves team-strength separation when available.
+- Automated edge, inventory, exposure, drawdown, model-divergence, feed-gap, and
+  unexplained-movement policy gates.
+- A live quote-publication API. It publishes recommendations; it does not claim a fill
+  because TxLINE currently exposes no orderbook venue.
+- TxLINE odds-proof retrieval plus real Solana `validate_odds` verification. `view` mode
+  checks program state; `transaction` mode additionally submits and confirms a transaction.
+- TxLINE score-stat proofs plus real Solana `validate_stat` verification for goals and red
+  cards. Score and odds inputs remain outside the live corpus/engine until proof succeeds;
+  unproved pressure events are neutralized in live mode.
+- Persistent normalized corpora, append-only decision ledgers, deterministic replay, and
+  real-corpus evaluation that rejects synthetic input. Live processing advances one shared
+  engine session per fixture; recovery verifies and repairs only a missing ledger suffix.
+- A connected Next.js dashboard. No mock adapter or hard-coded success path exists.
+- Compiled production runtimes: the daemon carries production dependencies only, the analyst is
+  a standalone bundle, and the dashboard uses Next's standalone output. No service runs via `tsx`.
+
+## Modes
+
+Live and replay are deliberately separate:
+
+```bash
+# Explicit deterministic research/demo replay
+pnpm run replay
+
+# Real TxLINE service. Missing credentials are a fatal configuration error.
+TISSUE_MODE=live pnpm run daemon
+```
+
+The daemon never falls back from live input to a corpus or synthetic match.
+
+## Local verification
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run ci
+pnpm run build
+pnpm run replay
+
+cp .env.example .env
+# Fill real TxLINE credentials, then:
+docker compose up --build
+
+# Verify final-image pruning, fail-closed startup, health, metrics, and headers.
+pnpm verify:containers
+```
+
+To create or renew a real devnet subscription and capture an accessible completed fixture:
+
+```bash
+TISSUE_KEYPAIR_PATH=/absolute/path/to/devnet-keypair.json \
+  pnpm --filter @tissue/daemon activate:devnet -- <fixtureId>
+```
+
+The activation command fails unless the subscription confirms, activation succeeds, and
+both real score and odds rows are captured. Its credential file is owner-readable only.
+
+Daemon evidence endpoints:
+
+- `GET /health` — process liveness and current feed state
+- `GET /ready` — readiness requires real feed activity and no active halt
+- `GET /state` — fixtures, decisions, quotes, radar, grades, and proof evidence
+- `GET /verify` — recomputed decision hash-chain status
+- `GET /metrics` — bounded Prometheus proof, stream, and SSE counters
+- `GET /events` — server-sent live state updates
+
 ## Layout
 
-```
-apps/daemon        TS + tsx daemon. Hard module boundaries (PRD §5):
-  src/ingest         TxLINE auth + dual SSE + corpus recorder
-  src/state          in-play match state machine
-  src/tissue         pure, cited, tested pricing core (the jewel)
-  src/radar          Latency Radar (Daniel's lane)
-  src/strategy       edge + inventory-skewed quoting (Tim's lane)
-  src/risk           risk gates — the only module that green-lights execution
-  src/exec           exec port: simulated maker book + real validate_odds anchoring
-  src/ledger         hash-chained decision records
-  src/grader         CLV / Brier / PnL / latency / per-class hit rates
-  src/replay         corpus replay = backtester + demo generator
-apps/dashboard     Next.js headless skeleton on a mock data seam + "Ask Tissue" panel
-apps/analyst       read-only analyst: MCP (3 read tools) + Groq→DGrid LLM; narrates the
-                   ledger, never decides. Isolated from the decision path by construction.
-packages/shared    domain types (the cross-cutting contract)
-policy.toml        every tunable constant (PRD §4)
+```text
+apps/daemon/src/ingest       TxLINE auth, normalization, snapshots, dual SSE
+apps/daemon/src/runtime      explicit live service and durable state publication
+apps/daemon/src/tissue       deterministic goals model and in-play repricing
+apps/daemon/src/radar        event-to-market reaction classification
+apps/daemon/src/strategy     edge, inventory skew, sizing, quote proposals
+apps/daemon/src/risk         sole quote-publication authorization boundary
+apps/daemon/src/exec         replay book + live Solana score/odds verification boundary
+apps/daemon/src/ledger       hash-chained decisions
+apps/daemon/src/grader       CLV, Brier, latency, class performance
+apps/daemon/src/evaluation   real-corpus-only evaluation and baselines
+apps/dashboard               live HTTP-backed Next.js evidence console
+apps/analyst                 isolated MCP analyst over real live exports and read-only tools
+packages/shared              domain contracts
 ```
 
-## Execution model — read this first
-
-The sponsor's on-chain program has **no intent-book**. Rather than design execution on a
-guessed interface, `exec/` is a **port**: provenance anchoring uses the real
-`validate_odds` / `validate_stat` CPIs (permissionless, callable today), while
-matching/fills run through an internal **simulated maker book, labeled `simulated`
-everywhere it surfaces**. A future real orderbook swaps in behind the same boundary.
-Full detail: `GROUND-TRUTH.md`, `HANDOFF.md`, `feedback.md`.
-
-## Dev
-
-```
-pnpm install
-pnpm --filter @tissue/daemon test      # pricing units, property tests, replay-equality CI
-pnpm --filter @tissue/daemon replay    # replay a corpus fixture
-```
-
-Model lineage: de-vig consensus → Poisson goals with Dixon–Coles rho (Dixon & Coles 1997),
-inventory-skewed quoting (Avellaneda–Stoikov 2008). Fixed-point (integer bps), message-id
-ordering, no wall-clock in decisions → `replay(corpus) === ledger`, asserted in CI.
+Operational detail is in `RUNBOOK.md`; bounty packaging is in `SUBMISSION.md`; API
+integration feedback is in `feedback.md`.

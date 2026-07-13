@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { loadPolicy, type Policy } from "../config/policy.js";
-import { runEngine } from "./engine.js";
+import { createEngineSession, runEngine } from "./engine.js";
 import { verifyChain } from "../ledger/ledger.js";
 import { canonicalize, hashPayload, linkHash, GENESIS_HASH } from "../ledger/hash.js";
 import { brierDecomposition } from "../grader/brier.js";
@@ -70,9 +70,42 @@ describe("engine — the decision loop", () => {
     expect(result.anchors.length).toBeGreaterThan(0);
     expect(result.anchors[0]!.programId).toBe("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
   });
+
+  it("prices a totals-only TxLINE bundle and publishes no synthetic fills in live mode", () => {
+    const corpus = generateSyntheticCorpus().filter(
+      (message) => message.kind !== "odds" || message.marketKey.market !== "1X2",
+    );
+    const result = runEngine(corpus, policy, "devnet", { simulateFills: false });
+    expect(result.ledger.all().some((record) => record.tissueProb > 0)).toBe(true);
+    expect(result.book.allFills()).toEqual([]);
+    expect(result.ledger.all().every((record) => record.simulated === false)).toBe(true);
+  });
 });
 
 describe("replay(corpus) === ledger — the CI backbone", () => {
+  it("incrementally extends the exact ledger prefix without replaying prior messages", () => {
+    const corpus = generateSyntheticCorpus();
+    const expected = runEngine(corpus, policy).ledger.all();
+    const session = createEngineSession(policy);
+    for (let i = 0; i < corpus.length; i++) {
+      const current = session.append(corpus[i]!);
+      expect(current.ledger.length).toBe(i + 1);
+      expect(current.ledger.headHash).toBe(expected[i]!.hash);
+      expect(verifyChain(current.ledger.all()).ok).toBe(true);
+    }
+    expect(session.finish().ledger.headHash).toBe(expected.at(-1)!.hash);
+  });
+
+  it("finalizes idempotently and rejects messages after finalization", () => {
+    const session = createEngineSession(policy);
+    const corpus = generateSyntheticCorpus();
+    for (const message of corpus) session.append(message);
+    const first = session.finish();
+    const radarCount = first.radarEvents.length;
+    expect(session.finish().radarEvents).toHaveLength(radarCount);
+    expect(() => session.append(corpus[0]!)).toThrow("finalized engine session");
+  });
+
   it("two runs over the same corpus produce a bit-for-bit identical ledger", () => {
     const corpus = generateSyntheticCorpus();
     const a = runEngine(corpus, policy).ledger.all();

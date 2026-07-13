@@ -5,10 +5,10 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import type { AnalystExport } from "@tissue/shared";
 import { materializeExports } from "./materialize.js";
 import { ReadOnlyLedgerDb } from "./db.js";
-import { TOOLS, TOOL_BY_NAME } from "./tools.js";
+import { TOOLS } from "./tools.js";
 import { connectInMemory } from "./mcpBridge.js";
 import { runAnalystQuery } from "./agent.js";
-import type { ChatMessage, ChatResult, LlmClient, ToolSpec } from "./llm.js";
+import type { ChatResult, LlmClient } from "./llm.js";
 
 function makeExport(): AnalystExport {
   const decision = (seq: number, action: string, radarClass?: string) => ({
@@ -88,16 +88,22 @@ describe("tools return grounded data", () => {
 class FakeLlm implements LlmClient {
   calls = 0;
   constructor(private readonly toolName: string, private readonly args: Record<string, unknown>) {}
-  async chat(_messages: ChatMessage[], _tools: ToolSpec[]): Promise<ChatResult> {
+  async chat(): Promise<ChatResult> {
     this.calls += 1;
     if (this.calls === 1) {
       return {
         message: { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: this.toolName, arguments: JSON.stringify(this.args) } }] },
         provider: "groq",
         model: "fake",
+        fellBack: false,
       };
     }
-    return { message: { role: "assistant", content: "The desk HALTed on unexplained movement at seq 2." }, provider: "groq", model: "fake" };
+    return {
+      message: { role: "assistant", content: "The desk HALTed on unexplained movement at seq 2." },
+      provider: "groq",
+      model: "fake",
+      fellBack: false,
+    };
   }
 }
 

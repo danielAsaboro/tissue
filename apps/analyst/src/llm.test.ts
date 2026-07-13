@@ -30,6 +30,20 @@ function startServer(status: number, completion?: string): Promise<{ url: string
   });
 }
 
+function startOversizedServer(): Promise<string> {
+  return new Promise((resolve) => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("x".repeat(2_097_153));
+    });
+    servers.push(server);
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      resolve(`http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}/v1`);
+    });
+  });
+}
+
 function cfg(name: string, url: string): ProviderConfig {
   return { name, baseUrl: url, apiKey: "test", model: "test-model" };
 }
@@ -60,5 +74,11 @@ describe("FallbackLlmClient", () => {
   it("throws when no provider is configured", async () => {
     const client = new FallbackLlmClient(null, null);
     await expect(client.chat([{ role: "user", content: "hi" }], [])).rejects.toThrow(/No LLM provider/);
+  });
+
+  it("rejects oversized provider responses", async () => {
+    const url = await startOversizedServer();
+    const client = new FallbackLlmClient(cfg("groq", url), null);
+    await expect(client.chat([{ role: "user", content: "hi" }], [])).rejects.toThrow(/size limit/);
   });
 });

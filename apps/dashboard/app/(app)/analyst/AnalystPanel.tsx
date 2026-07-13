@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { askAnalyst, type AskResult } from "./actions";
 
 const SUGGESTIONS = [
-  "What did the desk do on SYN-QF1?",
+  "What did the desk do on the latest live fixture?",
   "Show the most recent decisions and why it halted.",
   "How did the late-reaction signal class perform?",
 ];
@@ -36,6 +36,7 @@ export function AnalystPanel() {
           value={question}
           placeholder="Ask Tissue…"
           onChange={(e) => setQuestion(e.target.value)}
+          maxLength={1000}
           onKeyDown={(e) => e.key === "Enter" && ask(question)}
           style={{ flex: 1, minWidth: 260 }}
         />

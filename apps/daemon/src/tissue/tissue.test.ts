@@ -3,8 +3,8 @@ import { loadPolicy, type Policy } from "../config/policy.js";
 import { poissonPmf, scoreMatrix, dcTau } from "./poisson.js";
 import { outcome1x2, outcomeTotals } from "./outcomes.js";
 import { solveBaseLambdas } from "./solve.js";
-import { remainingTimeFraction, remainingLambdas } from "./inplay.js";
-import { priceMarkets, type TissueState } from "./price.js";
+import { remainingTimeFraction } from "./inplay.js";
+import type { TissueState } from "./price.js";
 import { TissuePricer, solveConfigFromPolicy } from "./index.js";
 import { readCorpus } from "../ingest/corpus.js";
 import { generateSyntheticCorpus, SYNTHETIC_FIXTURE_ID } from "../ingest/synthetic.js";
@@ -84,6 +84,14 @@ describe("solve round-trip", () => {
     expect(base.away).toBeGreaterThan(0);
     const o = outcome1x2(scoreMatrix(base.home, base.away, cfg.rho, cfg.maxGoals), 0, 0);
     expect(o.home).toBeCloseTo(0.45, 2);
+  });
+
+  it("boots from a totals-only TxLINE bundle without inventing a 1X2 input", () => {
+    const cfg = solveConfigFromPolicy(policy);
+    const base = solveBaseLambdas({ totals: { line: 2.5, over: 0.52 } }, cfg);
+    expect(base.home).toBeCloseTo(base.away, 10);
+    const t = outcomeTotals(scoreMatrix(base.home, base.away, cfg.rho, cfg.maxGoals), 0, 0, 2.5);
+    expect(t.over).toBeCloseTo(0.52, 2);
   });
 });
 

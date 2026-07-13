@@ -22,7 +22,8 @@ export default async function OverviewPage() {
       </section>
 
       <section className="panel">
-        <h2>Inventory & exposure</h2>
+        <h2>Published quote exposure</h2>
+        <p className="muted">Intent exposure only. Live mode does not claim counterparty fills or realized PnL.</p>
         <Gauges gauges={gauges} />
       </section>
     </div>

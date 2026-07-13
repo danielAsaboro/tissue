@@ -26,13 +26,17 @@ import {
  */
 
 export class SimulatedBook implements ExecPort {
-  readonly simulated = true;
+  readonly simulated: boolean;
   private readonly intents = new Map<string, Intent>();
   private readonly fills: Fill[] = [];
   private seq = 0;
 
+  constructor(private readonly simulateMatching = true) {
+    this.simulated = simulateMatching;
+  }
+
   postIntent(p: QuoteProposal, fixtureId: string, msgId: string): Intent {
-    const id = `SIM:${fixtureId}:${String(++this.seq).padStart(5, "0")}`;
+    const id = `${this.simulateMatching ? "SIM" : "QUOTE"}:${fixtureId}:${String(++this.seq).padStart(5, "0")}`;
     const intent: Intent = {
       id,
       fixtureId,
@@ -43,7 +47,7 @@ export class SimulatedBook implements ExecPort {
       sizeUnits: units(p.sizeUnits),
       filledUnits: units(0),
       status: "Posted",
-      simulated: true,
+      simulated: this.simulateMatching,
       createdMsgId: msgId,
     };
     this.intents.set(id, intent);
@@ -73,6 +77,7 @@ export class SimulatedBook implements ExecPort {
   }
 
   submitExternal(ext: ExternalIntent): Fill[] {
+    if (!this.simulateMatching) return [];
     // Self-match guard: Tissue never trades against its own intents.
     if (ext.owner === TISSUE_OWNER) return [];
 
@@ -153,7 +158,7 @@ export class SimulatedBook implements ExecPort {
       perIntentPnlUnits[f.tissueIntentId] = (perIntentPnlUnits[f.tissueIntentId] ?? 0) + pnl;
       total += pnl;
     }
-    return { perIntentPnlUnits, totalPnlUnits: total, simulated: true };
+    return { perIntentPnlUnits, totalPnlUnits: total, simulated: this.simulateMatching };
   }
 }
 

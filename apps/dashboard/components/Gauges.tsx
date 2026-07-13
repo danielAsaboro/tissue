@@ -1,6 +1,5 @@
 import type { GaugeState } from "@/lib/data/types";
 import { formatUnits } from "@/lib/format";
-import { SimBadge } from "./SimBadge";
 
 export function Gauges({ gauges }: { gauges: GaugeState }) {
   const { inventory, exposure } = gauges;
@@ -18,20 +17,6 @@ export function Gauges({ gauges }: { gauges: GaugeState }) {
         <div className="metric">
           <span className="label">Open intents</span>
           <span className="value">{exposure.openIntents}</span>
-        </div>
-        <div className="metric">
-          <span className="label">
-            Realized PnL <SimBadge />
-          </span>
-          <span className="value">{formatUnits(exposure.realizedPnlUnits)}</span>
-        </div>
-        <div className="metric">
-          <span className="label">Peak equity</span>
-          <span className="value">{formatUnits(exposure.peakEquityUnits)}</span>
-        </div>
-        <div className="metric">
-          <span className="label">Drawdown</span>
-          <span className="value">{formatUnits(exposure.drawdownUnits)}</span>
         </div>
       </div>
 

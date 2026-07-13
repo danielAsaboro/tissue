@@ -7,6 +7,7 @@
  */
 
 const ANALYST_URL = process.env.ANALYST_URL ?? "http://127.0.0.1:8787";
+const MAX_QUESTION_CHARS = 1_000;
 
 export interface AnalystAnswer {
   answer: string;
@@ -19,16 +20,25 @@ export interface AnalystAnswer {
 export type AskResult = AnalystAnswer | { error: string };
 
 export async function askAnalyst(question: string): Promise<AskResult> {
+  const normalized = question.trim();
+  if (!normalized) return { error: "Enter a question." };
+  if (normalized.length > MAX_QUESTION_CHARS) {
+    return { error: `Question is too long (maximum ${MAX_QUESTION_CHARS} characters).` };
+  }
   try {
     const res = await fetch(`${ANALYST_URL}/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question: normalized }),
       cache: "no-store",
+      signal: AbortSignal.timeout(90_000),
     });
-    if (!res.ok) return { error: `analyst service returned ${res.status}` };
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      return { error: body?.error ?? `analyst service returned ${res.status}` };
+    }
     return (await res.json()) as AnalystAnswer;
   } catch {
-    return { error: `analyst offline at ${ANALYST_URL}. Start it with \`pnpm --filter @tissue/analyst serve\`` };
+    return { error: "Analyst service is temporarily unavailable." };
   }
 }

@@ -5,6 +5,25 @@ tried, what we expected, what happened, and the workaround. Newest first.
 
 ---
 
+## F-003 — Odds validation endpoint is now published and usable
+**Phase:** live verification · **Severity:** resolved blocker · **Date:** 2026-07-13
+
+The current hosted API reference now documents:
+
+`GET /api/odds/validation?messageId={messageId}&ts={ts}`
+
+with JWT + `X-Api-Token`, returning `odds`, `summary`, `subTreeProof`, and `mainTreeProof`.
+This resolves the earlier T3 uncertainty. Tissue now validates response message identity,
+decodes every proof hash to exactly 32 bytes, derives/checks the daily root PDA and owner,
+executes `validate_odds` through a real RPC view, and can submit a confirmed transaction.
+
+Remaining documentation friction: the API response schema renders the proof arrays as a
+`Nil | ProofNode[]` union, and the account name (`daily_odds_merkle_roots`) still differs from
+the documented/root insertion seed terminology (`daily_batch_roots`). Tissue fails precisely
+if the derived account is absent or owned by another program rather than guessing success.
+
+---
+
 ## F-001 — On-chain intent-book / trade-suite instructions are not in the current devnet IDL
 **Phase:** 2 (execution ground truth) · **Severity:** high (blocks the assumed exec design) · **Date:** 2026-07-13
 

@@ -5,11 +5,17 @@
 !.env.example
 corpus/
 dist/
+.runtime/
 node_modules/
 .next/
 out/
 *.tsbuildinfo
 .DS_Store
 *.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
 /apps/daemon/.keys
 apps/daemon/.keys/

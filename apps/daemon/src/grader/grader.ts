@@ -13,8 +13,8 @@ import { clvBps, summarizeClv } from "./clv.js";
 
 /**
  * Grade sheet assembler (PRD §2, §7). Fill-independent, auto-publishing. Pure over an
- * EngineResult. [LANE: Daniel] owns presentation. Realized PnL is flagged `simulated`
- * because it comes from the simulated maker book (HANDOFF D-001).
+ * EngineResult. [LANE: Daniel] owns presentation. Replay PnL remains explicitly simulated;
+ * live quote publication has no fills and therefore reports zero realized PnL.
  */
 
 export function grade(result: EngineResult, policy: Policy): GradeSheet {
@@ -37,8 +37,8 @@ export function grade(result: EngineResult, policy: Policy): GradeSheet {
     pnl: {
       realizedUnits,
       matchedIntents: new Set(fills.map((f) => f.tissueIntentId)).size,
-      settlementTxSigs: [], // simulated book — no on-chain settlement tx
-      simulated: true,
+      settlementTxSigs: [], // TxLINE currently exposes no execution/settlement venue
+      simulated: result.book.simulated,
     },
   };
 }

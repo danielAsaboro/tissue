@@ -17,7 +17,7 @@ export function QuoteTapeTable({ rows }: { rows: readonly QuoteTapeRow[] }) {
           <th className="num">Price</th>
           <th className="num">Size</th>
           <th>Status</th>
-          <th>Book</th>
+          <th>Mode</th>
         </tr>
       </thead>
       <tbody>
@@ -30,7 +30,7 @@ export function QuoteTapeTable({ rows }: { rows: readonly QuoteTapeRow[] }) {
             <td className="num">{formatMilliOdds(row.priceMilliOdds)}</td>
             <td className="num">{formatUnits(row.sizeUnits)}</td>
             <td>{row.status}</td>
-            <td>{row.simulated ? <SimBadge /> : <span className="muted">real</span>}</td>
+            <td>{row.simulated ? <SimBadge /> : <span className="badge badge-ok">LIVE OUTPUT</span>}</td>
           </tr>
         ))}
       </tbody>
