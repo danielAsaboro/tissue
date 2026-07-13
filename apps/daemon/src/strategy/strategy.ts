@@ -106,13 +106,13 @@ export function proposeQuotes(inp: StrategyInputs, policy: Policy): QuoteProposa
     const pTrue = e.tissueProb / 10000;
 
     const backStake = fractionalKellyStake(pTrue, backOdds / 1000, kelly);
-    if (backStake > 0) {
+    if (backStake > 0 && inBand(backOdds, policy)) {
       proposals.push(quote(e, "BACK", backOdds, backStake, inp.radarClass, "back-value"));
     }
     // Laying profits when true prob is BELOW the lay-implied prob; size on (1 − pTrue).
     const layImplied = milliOddsToProb(layOdds) / 10000;
     const layStake = fractionalKellyStake(1 - pTrue, 1 / Math.max(1 - layImplied, 1e-4), kelly);
-    if (layStake > 0) {
+    if (layStake > 0 && inBand(layOdds, policy)) {
       proposals.push(quote(e, "LAY", layOdds, layStake, inp.radarClass, "lay-spread"));
     }
   }
@@ -137,6 +137,14 @@ function quote(
     radarClass,
     reason,
   };
+}
+
+/** A desk does not quote near-certainties or deep longshots (policy odds band). */
+function inBand(milliOdds: number, policy: Policy): boolean {
+  return (
+    milliOdds >= policy.strategy.min_quote_odds_milli &&
+    milliOdds <= policy.strategy.max_quote_odds_milli
+  );
 }
 
 export function marketMapFromOdds(odds: readonly OddsMessage[]): Map<string, OddsMessage> {

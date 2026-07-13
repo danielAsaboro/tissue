@@ -54,6 +54,10 @@ stale_spread_bps_per_sec = 25
 # Avellaneda–Stoikov-adapted inventory skew: reservation price shifts against inventory.
 # gamma_inventory scales how hard we lean quotes to mean-revert inventory to zero.
 gamma_inventory = 0.08
+# Quote-odds sanity bounds (milli-odds). A desk does not make markets on near-certainties
+# or deep longshots — quoting outside this band is skipped. Also bounds settlement variance.
+min_quote_odds_milli = 1100   # ≥ 1.10 decimal (implied ≲ 91%)
+max_quote_odds_milli = 15000  # ≤ 15.0 decimal (implied ≳ 6.7%)
 
 [strategy.radar_conditioning]
 # Strategy conditions on Radar signal class (PRD §2 quote engine).

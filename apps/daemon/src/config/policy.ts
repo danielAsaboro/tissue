@@ -37,6 +37,8 @@ export interface Policy {
     readonly base_spread_bps: number;
     readonly stale_spread_bps_per_sec: number;
     readonly gamma_inventory: number;
+    readonly min_quote_odds_milli: number;
+    readonly max_quote_odds_milli: number;
     readonly radar_conditioning: {
       readonly aggressive_classes: string[];
       readonly widen_classes: string[];

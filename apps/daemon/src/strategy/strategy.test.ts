@@ -95,6 +95,16 @@ describe("strategy", () => {
     expect(some.length).toBeGreaterThan(0);
   });
 
+  it("never quotes outside the policy odds band (no deep longshots / near-certainties)", () => {
+    const market = marketMapFromOdds([odds("1X2", { HOME: 200, DRAW: 300, AWAY: 9500 })]);
+    // tissue disagrees hugely on a near-certainty/longshot; proposals must stay in-band.
+    const props = proposeQuotes({ priced: priced(9600, 250, 150), market, inventoryNorm: new Map(), stalenessMs: 0, radarClass: undefined }, policy);
+    for (const p of props) {
+      expect(p.priceMilliOdds).toBeGreaterThanOrEqual(policy.strategy.min_quote_odds_milli);
+      expect(p.priceMilliOdds).toBeLessThanOrEqual(policy.strategy.max_quote_odds_milli);
+    }
+  });
+
   it("unexplained-movement vetoes all quoting", () => {
     const market = marketMapFromOdds([odds("1X2", { HOME: 5000, DRAW: 2800, AWAY: 2200 })]);
     const veto = proposeQuotes({ priced: priced(5800, 2500, 1700), market, inventoryNorm: new Map(), stalenessMs: 0, radarClass: "unexplained-movement" }, policy);
