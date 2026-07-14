@@ -5,6 +5,9 @@ import { dgridConfig, FallbackLlmClient, groqConfig } from "./llm.js";
 import { runAnalystQuery } from "./agent.js";
 import { CORPUS_DIR, DB_PATH } from "./paths.js";
 import { materializeExports, readExportsDir } from "./materialize.js";
+import { ANALYST_SKILLS } from "./skills.js";
+import { TOOLS } from "./tools.js";
+import { loadTissueSlipConfig, TissueSlipConsumer } from "@tissue/slip";
 
 /**
  * Tiny HTTP surface for the dashboard's "ask Tissue" panel: POST /chat { question } → grounded
@@ -35,9 +38,9 @@ async function refreshProjection(): Promise<void> {
   await projectionQueue;
 }
 
-async function handleChat(question: string) {
+async function handleChat(question: string, slip: TissueSlipConsumer | null) {
   await refreshProjection();
-  const bridge = await connectInMemory(DB_PATH);
+  const bridge = await connectInMemory(DB_PATH, slip);
   try {
     const llm = new FallbackLlmClient();
     const answer = await runAnalystQuery(question, llm, bridge);
@@ -48,6 +51,8 @@ async function handleChat(question: string) {
 }
 
 export function createAnalystServer(): Server {
+  const slipConfig = loadTissueSlipConfig();
+  const slip = slipConfig ? new TissueSlipConsumer(slipConfig) : null;
   let activeChats = 0;
   const recentChats: number[] = [];
   const counters = { succeeded: 0, failed: 0, rateLimited: 0, fallbacks: 0 };
@@ -60,6 +65,9 @@ export function createAnalystServer(): Server {
       alive: true,
       ready: providerConfigured && realExports.length > 0,
       readOnlyTools: true,
+      skills: ANALYST_SKILLS.map((skill) => skill.id),
+      tools: TOOLS.map((tool) => tool.name),
+      slipConfigured: slip !== null,
       providerConfigured,
       realFixtures: realExports.length,
     }));
@@ -140,7 +148,7 @@ export function createAnalystServer(): Server {
         admitted = true;
         activeChats += 1;
         recentChats.push(now);
-        const answer = await handleChat(normalized);
+        const answer = await handleChat(normalized, slip);
         counters.succeeded += 1;
         if (answer.fallbackFired) counters.fallbacks += 1;
         res.writeHead(200, { "content-type": "application/json" });

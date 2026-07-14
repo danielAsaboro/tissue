@@ -1,0 +1,10 @@
+{
+  "package": "@slip/sdk",
+  "version": "0.2.0",
+  "tarball": "slip-sdk-0.2.0.tgz",
+  "slipBaseCommit": "e4680b8e2a95414c4af8a67f8986b8149ccbd64b",
+  "packedSdkSourcePatchSha256": "0b2f308c1283ac02b5584e42d8b1db9666d70c120aa4e427ca7f97b77007fd32",
+  "sha512": "d9eca521baf912fe1a3bff4f08223bf7b31e1ae422ad0703565a9058f04da6ed9858a3658ae3eba76ad3381084fa4bf28418382b1a261e4e01351f21069201dd",
+  "npmIntegrity": "sha512-2eylIbr5Ev4aO/9PCCI797MeGuQirQcDVlqQWPBNpu2YWKNliuPrp2rTOBCE+kvyhBg4KxomHk4BNR8hBpIB3Q==",
+  "note": "The user requested staged changes without commits. The base commit and complete staged packages/sdk patch hash identify the packed source."
+}

@@ -5,10 +5,11 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import type { AnalystExport } from "@tissue/shared";
 import { materializeExports } from "./materialize.js";
 import { ReadOnlyLedgerDb } from "./db.js";
-import { TOOLS } from "./tools.js";
+import { TOOL_BY_NAME, TOOLS } from "./tools.js";
 import { connectInMemory } from "./mcpBridge.js";
 import { runAnalystQuery } from "./agent.js";
 import type { ChatResult, LlmClient } from "./llm.js";
+import { ANALYST_SKILLS, renderAnalystSkills } from "./skills.js";
 
 function makeExport(): AnalystExport {
   const decision = (seq: number, action: string, radarClass?: string) => ({
@@ -63,10 +64,42 @@ describe("read-only BY CONSTRUCTION", () => {
     db.close();
   });
 
-  it("the tool surface has NO write/execute/post tool — only the three reads", () => {
-    expect(TOOLS.map((t) => t.name).sort()).toEqual(["get_recent_decisions", "get_signal_class_stats", "query_ledger_by_fixture"]);
+  it("the tool surface has only ledger and on-chain reads, with no write/execute/post authority", () => {
+    expect(TOOLS.map((t) => t.name).sort()).toEqual([
+      "get_recent_decisions",
+      "get_signal_class_stats",
+      "inspect_slip_market",
+      "list_slip_markets",
+      "list_slip_wallet_tickets",
+      "query_ledger_by_fixture",
+      "verify_slip_market_reference",
+    ]);
     for (const t of TOOLS) {
       expect(t.name).not.toMatch(/write|insert|update|delete|post|cancel|execute|trade|order/i);
+    }
+  });
+
+  it("declares skills that constrain every tool without granting transaction authority", () => {
+    const declaredTools = new Set(TOOLS.map((tool) => tool.name));
+    expect(ANALYST_SKILLS.map((skill) => skill.id)).toEqual([
+      "ledger-forensics",
+      "slip-market-intelligence",
+      "slip-settlement-audit",
+    ]);
+    for (const skill of ANALYST_SKILLS) {
+      for (const tool of skill.tools) expect(declaredTools.has(tool)).toBe(true);
+    }
+    expect(renderAnalystSkills()).toContain("pool-derived participation weights");
+  });
+
+  it("fails precisely when a Slip tool is called without a configured real boundary", async () => {
+    const db = new ReadOnlyLedgerDb(dbPath);
+    try {
+      const tool = TOOL_BY_NAME.get("list_slip_markets");
+      if (!tool) throw new Error("Slip tool missing");
+      expect(() => tool.handler({ db, slip: null }, {})).toThrow(/TISSUE_SLIP_RPC_URL/);
+    } finally {
+      db.close();
     }
   });
 });

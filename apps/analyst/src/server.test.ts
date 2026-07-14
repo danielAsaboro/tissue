@@ -21,6 +21,18 @@ afterEach(async () => {
 });
 
 describe("analyst HTTP boundary", () => {
+  it("advertises the real read-only skills and tools without claiming Slip configuration", async () => {
+    const origin = await bind();
+    const health = await fetch(`${origin}/health`).then((response) => response.json()) as {
+      skills: string[];
+      tools: string[];
+      slipConfigured: boolean;
+    };
+    expect(health.skills).toContain("slip-market-intelligence");
+    expect(health.tools).toContain("verify_slip_market_reference");
+    expect(health.slipConfigured).toBe(false);
+  });
+
   it("requires JSON for chat requests", async () => {
     const origin = await bind();
     const response = await fetch(`${origin}/chat`, { method: "POST", body: "question=hello" });

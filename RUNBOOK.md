@@ -24,6 +24,34 @@ TISSUE_DAEMON_URL=http://127.0.0.1:8788 pnpm --filter @tissue/dashboard start
 pnpm --filter @tissue/analyst serve
 ```
 
+To enable the analyst's Slip skills, set the three atomic boundaries below. WebSocket and wallet
+are optional; no private key is accepted by the analyst:
+
+```bash
+TISSUE_SLIP_RPC_URL=http://127.0.0.1:8899
+TISSUE_SLIP_PROGRAM_ID=<unified Slip program>
+TISSUE_SLIP_SETTLEMENT_MINT=<local or cluster settlement mint>
+TISSUE_SLIP_WEBSOCKET_URL=ws://127.0.0.1:8900
+TISSUE_SLIP_WALLET=<optional public wallet address>
+```
+
+Partial configuration fails startup. On public clusters, first call `list_slip_markets` only after
+the SDK capability check confirms the deployed unified binary. The four analyst market tools are
+read-only. `@tissue/slip` contains real instruction builders for a future risk-authorized signer,
+but the MCP and HTTP surfaces deliberately expose no transaction action.
+
+The real model-to-tool loop has its own explicit test gate:
+
+```bash
+TISSUE_LIVE_MODEL_BASE_URL=http://your-openai-compatible-model/v1 \
+TISSUE_LIVE_MODEL_ID=your-tool-calling-model \
+  pnpm --filter @tissue/analyst test:ai:ollama
+```
+
+This test starts a protocol-valid local Solana RPC fixture, materializes a real read-only analyst
+database, asks the model to invoke MCP, and requires a grounded Slip SDK result. It is excluded from
+default CI only because the external model endpoint is not a repository-owned dependency.
+
 Or:
 
 ```bash
@@ -52,7 +80,8 @@ curl http://127.0.0.1:8788/metrics
 - `/state` is the dashboard source of truth; it carries no credentials or private keys.
 - `/verify` recomputes every persisted decision link.
 - The analyst `/health` endpoint on port `8787` reports `ready: true` only when an LLM
-  provider and at least one real live export are available. It ignores `SYN-*` fixtures.
+  provider and at least one real live export are available. It ignores `SYN-*` fixtures and
+  reports the installed skills, tool names, and whether a complete Slip boundary is configured.
 - Daemon and analyst `/metrics` endpoints expose no labels derived from user/feed input. Alert on
   sustained source-proof/stream failures, analyst 429s/failures, and unexpected provider fallback.
 - Compose rotates JSON logs at 10 MiB with five files per service. A private deployment must ship

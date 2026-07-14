@@ -1,5 +1,6 @@
 import type { ChatMessage, LlmClient, ToolCall } from "./llm.js";
 import type { McpBridge } from "./mcpBridge.js";
+import { renderAnalystSkills } from "./skills.js";
 
 /**
  * The analyst agent: an LLM + MCP tool loop over READ-ONLY ledger tools. It narrates
@@ -16,7 +17,12 @@ Rules:
 - Ground EVERY factual claim in a tool call. Never invent decisions, numbers, or signal classes.
 - Prefer citing specific ledger decisions by their seq and short hash.
 - If the tools don't contain the answer, say so plainly. Do not speculate.
-- Keep answers tight and instrument-calm. This is a flight recorder read-out, not advice.`;
+- Keep answers tight and instrument-calm. This is a flight recorder read-out, not advice.
+
+Use these explicit skills when relevant. Skills constrain your reasoning and tool selection; they
+never grant transaction authority:
+
+${renderAnalystSkills()}`;
 
 export interface AnalystAnswer {
   readonly answer: string;

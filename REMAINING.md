@@ -22,5 +22,10 @@ current match activity, or deployment authority and must be completed with obser
 6. Keep `danielAsaboro/tissue` private during the competition as directed. After the competition
    has ended, an owner/admin can make it public when publication is authorized; do not change
    visibility now.
+7. The July 14 packed-SDK devnet capability check returned `unifiedMarkets: false`. After Slip's
+   unified binary is upgraded, run the packed Tissue consumer against that public
+   deployment: capability detection, list/read/watch, real multi-wallet stake, ticket read,
+   permissionless proof resolution, claim/refund, and teardown. Until then the checked evidence is
+   the protocol-valid local RPC contract plus Slip's real Surfpool lifecycle, not a Tissue devnet run.
 
 Video recording is explicitly outside the current implementation objective.

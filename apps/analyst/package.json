@@ -10,14 +10,17 @@
     "serve": "tsx src/serverCli.ts",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:ai:ollama": "vitest run src/agent.live.integration.test.ts --reporter=verbose",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tissue/slip": "workspace:*",
     "@tissue/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@solana/kit": "^6.10.0",
     "@types/node": "^22.13.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",

@@ -28,6 +28,12 @@ hash chain. Live mode never invents counterparties, fills, or PnL.
   real-corpus evaluation that rejects synthetic input. Live processing advances one shared
   engine session per fixture; recovery verifies and repairs only a missing ledger suffix.
 - A connected Next.js dashboard. No mock adapter or hard-coded success path exists.
+- A provenance-pinned `@slip/sdk@0.2.0` consumer with canonical market readers, WebSocket
+  watchers, bigint pool/payout math, reference verification, wallet-ticket reads, and real
+  transaction builders. The analyst exposes only the read side; it never receives a signing key.
+- Three explicit analyst skills and seven MCP tools spanning ledger forensics, Slip pool
+  intelligence, and settlement-reference auditing. Slip pool weights remain evidence, not a
+  substitute for Tissue fair value or TxLINE settlement truth.
 - Compiled production runtimes: the daemon carries production dependencies only, the analyst is
   a standalone bundle, and the dashboard uses Next's standalone output. No service runs via `tsx`.
 
@@ -52,6 +58,11 @@ pnpm install --frozen-lockfile
 pnpm run ci
 pnpm run build
 pnpm run replay
+
+# Optional real-model agent/tool proof (requires an OpenAI-compatible tool-calling model).
+TISSUE_LIVE_MODEL_BASE_URL=http://your-model-host/v1 \
+TISSUE_LIVE_MODEL_ID=your-tool-model \
+  pnpm --filter @tissue/analyst test:ai:ollama
 
 cp .env.example .env
 # Fill real TxLINE credentials, then:
@@ -96,6 +107,8 @@ apps/daemon/src/evaluation   real-corpus-only evaluation and baselines
 apps/dashboard               live HTTP-backed Next.js evidence console
 apps/analyst                 isolated MCP analyst over real live exports and read-only tools
 packages/shared              domain contracts
+packages/slip                generic packed-SDK consumer, market views, watchers, action builders
+vendor                       packed SDK plus source-commit and integrity provenance
 ```
 
 Operational detail is in `RUNBOOK.md`; bounty packaging is in `SUBMISSION.md`; API

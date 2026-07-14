@@ -81,6 +81,11 @@ On-chain program IDs:
 - Dashboard loading, empty, error/retry, halt, proof, and hash-verification states.
 - Live decisions produce analyst exports; the isolated analyst service materializes its
   read model on demand and refuses to narrate synthetic fixtures.
+- Three explicit analyst skills drive seven read-only MCP tools. Four use the provenance-pinned
+  public Slip SDK for canonical pool, ticket, Rulebook, and creation-reference inspection. The
+  agent has no signer or transaction tool, and Slip pool weights never replace Tissue fair value.
+- A separately runnable live-model test proves the full model → MCP → packed SDK → canonical market
+  path; the deterministic suite does not monkey-patch a successful tool response.
 
 ## Evaluation
 

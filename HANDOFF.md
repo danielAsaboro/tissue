@@ -3,6 +3,31 @@
 Living state doc. Updated at every phase boundary. If you are picking this repo up,
 read this top-to-bottom, then `GROUND-TRUTH.md`, then `internal/tissue-prd.md` (the spec).
 
+## 2026-07-14 Slip SDK agent update
+
+- Tissue now installs the same packed `@slip/sdk@0.2.0` public contract as FullTime. The tarball
+  is local to `vendor/`; provenance records Slip's base commit, complete staged SDK patch hash,
+  tarball SHA-512, and npm integrity. Tissue has no FullTime dependency or room contract.
+- `@tissue/slip` is the generic automated-consumer boundary. It uses the SDK's capability check,
+  canonical readers, reference verifier, WebSocket watcher, wallet-ticket reader, bigint market
+  math, and real buy/claim/refund/resolve/void instruction builders. It never signs by itself.
+- The analyst now has three explicit skills: `ledger-forensics`, `slip-market-intelligence`, and
+  `slip-settlement-audit`. Seven MCP tools expose three immutable-ledger reads and four verified
+  Slip reads. No transaction, trade, post, policy-write, or signer tool is registered.
+- Slip implied probability is always labeled as pool-derived participation weight. It is advisory
+  evidence beside Tissue's independent price and cannot replace TxLINE proof settlement.
+- A protocol-valid local JSON-RPC fixture exercises the packed SDK's account codec, program
+  capability detection, PDA/owner/mint checks, bigint projections, and real buy-instruction
+  construction. A read-only July 14, 2026 check through Tissue's installed tarball returned
+  `{"network":"devnet","unifiedMarkets":false}` for the published Slip program, so public
+  controls remain gated until the upgrade authority deploys and a real lifecycle passes.
+- The live agent path is also verified, not only scripted: `qwen3.6:35b-mlx` on the MBP used the
+  `inspect_slip_market` MCP tool, crossed the protocol-valid local RPC boundary through the packed
+  refreshed packed SDK, and returned the grounded leading outcome, 5,000 bps pool weight, and
+  4.965 projected payout. `agent.live.integration.test.ts` passed again in 32.6 seconds after the
+  final SDK repack. It is a separately gated command because
+  a clean checkout has no right to assume that LAN model exists.
+
 ## 2026-07-13 live vertical-slice update (supersedes older execution/dashboard notes)
 
 - `pnpm daemon` is now an explicit **live-only** service. It requires `TISSUE_MODE=live`
@@ -47,7 +72,7 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 
 ## TL;DR
 
-All product phases now have a real vertical slice. **120 tests are green**; lint and all packages
+All product phases now have a real vertical slice. **126 tests are green**; lint and all packages
 typecheck; `replay(corpus) === ledger` is asserted in CI. The T1 gate failed because no
 on-chain intent-book exists and was resolved by decision **D-001**: live quote publication,
 real `validate_odds` verification, and matching simulation isolated to explicit replay.
@@ -68,7 +93,8 @@ Read `GROUND-TRUTH.md`, `REMAINING.md`, and `RUNBOOK.md`. Entry points are `pnpm
 | 7 Ledger + Grader | ✅ done | hash-chained ledger + engine loop + grader (CLV/Brier/latency/per-class/PnL); replay===ledger CI proven; 11 tests |
 | 8 Dashboard | ✅ connected | Next 16 dashboard reads only the daemon evidence API; live SSE refresh, loading/error/waiting states, proof evidence, no mock adapter |
 | 9 Replay lab | ✅ done | replayCli (multi-speed); determinism confirmed; feed-gap chaos drill; simulation explicit and isolated |
-| + Analyst layer | ✅ done | `apps/analyst`: read-only MCP (3 tools) + Groq→DGrid LLM + agent; dashboard "Ask Tissue"; 14 tests. **Additive, read-only, never near the decision path** |
+| + Analyst layer | ✅ done | `apps/analyst`: 3 constrained skills, 7 read-only MCP tools, Groq→DGrid LLM + agent; dashboard "Ask Tissue". **Additive, read-only, never near the decision path** |
+| + Slip consumer | ✅ local contract | Packed SDK readers/watchers/math/action builders plus analyst market tools. Public devnet use stays gated until the unified binary is detected. |
 
 ---
 
@@ -164,9 +190,11 @@ construction: the decision path writes a benign `*.analyst.json` export; the iso
 service atomically materializes `corpus/analyst.db`, and its MCP tools open SQLite
 **read-only** (`{ readOnly: true }`),
 so any write throws at the SQLite layer (tested, not just "our tools don't write"). It exposes
-exactly three read tools over MCP (`get_recent_decisions`, `get_signal_class_stats`,
-`query_ledger_by_fixture`), driven by an LLM (Groq primary → DGrid fallback, per-query provider
-logged) in an in-memory MCP client↔server loop. Surface: dashboard `/analyst` ("Ask Tissue")
+three ledger reads plus four packed-SDK market reads over MCP. The skills constrain how those
+tools are combined: ledger facts require citations; Slip pool weights are never called Tissue
+fair value; references must verify before their state is trusted. The loop is driven by an LLM
+(Groq primary → DGrid fallback, per-query provider logged) through a real in-memory MCP
+client↔server connection. Surface: dashboard `/analyst` ("Ask Tissue")
 → server-action proxy → analyst HTTP service. Statelessness w.r.t. decisioning is tested:
 running it never mutates the ledger DB and it has no trade/execute tool, so no answer can ever
 produce a trade. Runs as its own process — literally cannot reach the SSE→…→exec path.

@@ -3,6 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildMcpServer } from "./mcp.js";
 import { TOOLS } from "./tools.js";
 import type { ToolSpec } from "./llm.js";
+import type { TissueSlipConsumer } from "@tissue/slip";
 
 /**
  * In-memory MCP bridge: links a real MCP Client to the real MCP server over a linked
@@ -25,8 +26,8 @@ export function toolSpecs(): ToolSpec[] {
   }));
 }
 
-export async function connectInMemory(dbPath?: string): Promise<McpBridge> {
-  const { server, db } = buildMcpServer(dbPath);
+export async function connectInMemory(dbPath?: string, slip: TissueSlipConsumer | null = null): Promise<McpBridge> {
+  const { server, db } = buildMcpServer(dbPath, slip);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "tissue-analyst-agent", version: "0.1.0" });
   await server.connect(serverTransport);

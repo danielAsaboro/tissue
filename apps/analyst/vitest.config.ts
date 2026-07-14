@@ -7,6 +7,9 @@ export default defineConfig({
       "@tissue/shared": fileURLToPath(
         new URL("../../packages/shared/src/index.ts", import.meta.url),
       ),
+      "@tissue/slip": fileURLToPath(
+        new URL("../../packages/slip/src/index.ts", import.meta.url),
+      ),
     },
   },
   test: {
