@@ -68,6 +68,18 @@ read this top-to-bottom, then `GROUND-TRUTH.md`, then `internal/tissue-prd.md` (
 Tim — risk framework, exec integration, dashboard, narrative/demo.
 Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 
+## Tim — dashboard / marketing surface (2026-07-16)
+
+- Marketing landing rebuilt to FullTime-style story frames: desk hero, product
+  overview mock, radar moment strip, closing desk; compressed JPEGs under
+  `apps/dashboard/public/images/`; Open Graph at `og.jpg`.
+- Desk overview: proof-surface strip (independent price, radar halt, replay===ledger,
+  no fake fills) above Tissue-vs-market chart.
+- HaltBanner: stronger halted/unexplained-movement operator copy.
+- Radar page: full signal-class legend including unexplained-movement → halt.
+- Live credentials, validate_odds tx evidence, multi-fixture evaluate:real, and
+  public deploy remain external (see REMAINING.md).
+
 ---
 
 ## TL;DR
