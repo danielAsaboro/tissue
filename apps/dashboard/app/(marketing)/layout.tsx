@@ -7,13 +7,13 @@ export default function MarketingLayout({ children }: { children: ReactNode }) {
       <header className="mnav">
         <div className="mnav-inner">
           <Link href="/" className="mnav-brand">
-            Tissue
+            ⚡ Tissue
           </Link>
           <nav className="mnav-links">
-            <Link href="/grade">Grade sheet</Link>
-            <Link href="/analyst">Ask Tissue</Link>
+            <Link href="/grade">📊 Grade</Link>
+            <Link href="/analyst">💬 Ask</Link>
             <Link href="/overview" className="lp-btn lp-btn-primary" style={{ padding: "8px 16px" }}>
-              Open the desk
+              Open desk
             </Link>
           </nav>
         </div>
