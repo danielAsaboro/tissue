@@ -38,7 +38,7 @@ export const metadata: Metadata = {
     images: ["/images/og.jpg"],
     site: "@usetissue_",
   },
-  icons: { icon: "/images/og.jpg" },
+  icons: { icon: "/images/tissue-icon.svg", shortcut: "/images/tissue-icon.svg" },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

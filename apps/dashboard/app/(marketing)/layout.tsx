@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Image from "next/image";
 import Link from "next/link";
 
 export default function MarketingLayout({ children }: { children: ReactNode }) {
@@ -7,7 +8,7 @@ export default function MarketingLayout({ children }: { children: ReactNode }) {
       <header className="mnav">
         <div className="mnav-inner">
           <Link href="/" className="mnav-brand">
-            ⚡ Tissue
+            <Image src="/images/tissue-lockup.svg" alt="Tissue" width={128} height={33} priority />
           </Link>
           <nav className="mnav-links">
             <Link href="/grade">📊 Grade</Link>
