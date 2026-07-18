@@ -147,6 +147,107 @@ describe("normalizeOdds", () => {
   });
 });
 
+describe("normalizeScores — malformed and adversarial raw payloads", () => {
+  it("rejects a message whose timestamp is not numeric (string, non-numeric)", () => {
+    expect(normalizeScores({ FixtureId: 1, Ts: "not-a-number", StatusId: 2, Stats: {} }, "devnet")).toBeNull();
+  });
+
+  it("rejects a message whose timestamp is non-finite (Infinity, NaN)", () => {
+    expect(normalizeScores({ FixtureId: 1, Ts: Infinity, StatusId: 2, Stats: {} }, "devnet")).toBeNull();
+    expect(normalizeScores({ FixtureId: 1, Ts: NaN, StatusId: 2, Stats: {} }, "devnet")).toBeNull();
+  });
+
+  it("a real numeric-string timestamp (JSON numbers arrive as JS numbers, but be defensive) is still accepted", () => {
+    const m = normalizeScores({ FixtureId: 1, Ts: 1720000000000, StatusId: 2, Stats: {} }, "devnet");
+    expect(m).not.toBeNull();
+    expect(typeof m!.ts).toBe("number");
+  });
+
+  it("clamps a negative cumulative stat (corrupted feed value) to zero instead of producing an impossible score", () => {
+    const m = normalizeScores(
+      { FixtureId: 1, Ts: 1000, StatusId: 2, Stats: { [PERIOD_PREFIX.TOTAL + STAT_KEY.P1_GOALS]: -99 } },
+      "devnet",
+    );
+    expect(m!.homeScore).toBe(0);
+  });
+
+  it("a non-numeric stat field coerces safely to zero rather than propagating NaN into match state", () => {
+    const m = normalizeScores(
+      { FixtureId: 1, Ts: 1000, StatusId: 2, Stats: { [PERIOD_PREFIX.TOTAL + STAT_KEY.P1_GOALS]: "banana" } },
+      "devnet",
+    );
+    expect(m!.homeScore).toBe(0);
+    expect(Number.isFinite(m!.homeScore)).toBe(true);
+  });
+
+  it("a null or missing Stats object does not crash normalization", () => {
+    expect(normalizeScores({ FixtureId: 1, Ts: 1000, StatusId: 2, Stats: null }, "devnet")).not.toBeNull();
+    expect(normalizeScores({ FixtureId: 1, Ts: 1000, StatusId: 2 }, "devnet")).not.toBeNull();
+  });
+
+  it("an empty fixtureId rejects the message rather than defaulting to a fabricated identity", () => {
+    expect(normalizeScores({ FixtureId: "", Ts: 1000, StatusId: 2, Stats: {} }, "devnet")).toBeNull();
+    expect(normalizeScores({ Ts: 1000, StatusId: 2, Stats: {} }, "devnet")).toBeNull();
+  });
+});
+
+describe("normalizeOdds — malformed and adversarial raw payloads", () => {
+  it("rejects a message whose timestamp is not numeric or non-finite", () => {
+    expect(normalizeOdds({ fixture_id: 1, super_odds_type: "1X2", ts: "not-a-number", price_names: ["1", "X", "2"], prices: [2000, 3500, 4500] }, "devnet")).toBeNull();
+    expect(normalizeOdds({ fixture_id: 1, super_odds_type: "1X2", ts: Infinity, price_names: ["1", "X", "2"], prices: [2000, 3500, 4500] }, "devnet")).toBeNull();
+  });
+
+  it("a single non-numeric price does not poison the whole market's consensus with NaN — the message is rejected outright", () => {
+    const m = normalizeOdds(
+      { fixture_id: 1, super_odds_type: "Total Goals O/U", market_parameters: "2.5", price_names: ["Over", "Under"], prices: ["banana", 1900] },
+      "devnet",
+    );
+    expect(m).toBeNull();
+  });
+
+  it("a non-finite price (Infinity, NaN) is excluded from the selection set, not silently accepted", () => {
+    const m = normalizeOdds(
+      { fixture_id: 1, super_odds_type: "1X2", price_names: ["1", "X", "2"], prices: [Infinity, 3500, 4500] },
+      "devnet",
+    );
+    // HOME's price was garbage and excluded; 1X2 requires HOME+AWAY present, so the whole
+    // message is rejected rather than quoting a market with a missing leg.
+    expect(m).toBeNull();
+  });
+
+  it("mismatched price_names/prices array lengths reject the message", () => {
+    expect(
+      normalizeOdds({ fixture_id: 1, super_odds_type: "1X2", price_names: ["1", "X", "2"], prices: [2000, 3500] }, "devnet"),
+    ).toBeNull();
+  });
+
+  it("an empty fixtureId rejects the message", () => {
+    expect(
+      normalizeOdds({ super_odds_type: "1X2", price_names: ["1", "X", "2"], prices: [2000, 3500, 4500] }, "devnet"),
+    ).toBeNull();
+  });
+
+  it("negative or zero prices are excluded from the selection set rather than producing a division-by-zero or negative implied probability", () => {
+    const m = normalizeOdds(
+      { fixture_id: 1, super_odds_type: "Total Goals O/U", market_parameters: "2.5", price_names: ["Over", "Under"], prices: [-100, 0] },
+      "devnet",
+    );
+    expect(m).toBeNull();
+  });
+
+  it("every produced consensus value is a finite, real probability — never NaN or Infinity", () => {
+    const m = normalizeOdds(
+      { fixture_id: 1, super_odds_type: "1X2", price_names: ["1", "X", "2"], prices: [2000, 3500, 4500] },
+      "devnet",
+    );
+    expect(m).not.toBeNull();
+    if (!m || m.kind !== "odds") throw new Error("expected odds");
+    for (const v of Object.values(m.consensus)) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
+  });
+});
+
 describe("synthetic corpus", () => {
   it("is deterministic (byte-identical across generations)", () => {
     const a = JSON.stringify(generateSyntheticCorpus());
