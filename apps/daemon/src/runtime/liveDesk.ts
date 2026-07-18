@@ -12,6 +12,12 @@ import type { LiveConfig } from "./config.js";
 import type { DeskSnapshot, FixtureSnapshot, StreamState } from "./types.js";
 import { verifyOddsOnChain, type AnchorEvidence } from "../exec/anchorLive.js";
 import { verifyScoreOnChain } from "../exec/scoreAnchorLive.js";
+import { submitPreMatchCommitment, type PreMatchCommitmentEvidence } from "../exec/preMatchCommit.js";
+import { isCheckpointDue, prepareCheckpointAnchor, submitCheckpointAnchor, type CheckpointAnchorEvidence } from "../exec/periodicAnchor.js";
+import { loadLedgerSigner, type LedgerSigner } from "../ledger/signing.js";
+import { recordPolicySnapshot } from "../config/policySnapshot.js";
+import { DEFAULT_LATENCY_BUCKETS_MS, LatencyHistogram } from "./latencyHistogram.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 
 type Listener = (snapshot: DeskSnapshot) => void;
 
@@ -57,6 +63,24 @@ export function reconcilePersistedLedger(fixtureId: string, rebuilt: EngineResul
   }
 }
 
+/**
+ * Sums exposure/drawdown across every fixture's latest decision — pure, so the portfolio
+ * aggregation math is testable without standing up the full SSE live-desk harness.
+ */
+export function sumPortfolioRisk(
+  results: Iterable<EngineResult>,
+): { exposureUnits: number; drawdownUnits: number } {
+  let exposureUnits = 0;
+  let drawdownUnits = 0;
+  for (const result of results) {
+    const latest = result.ledger.all().at(-1);
+    if (!latest) continue;
+    exposureUnits += latest.state.exposure.perFixtureUnits;
+    drawdownUnits += latest.state.exposure.drawdownUnits;
+  }
+  return { exposureUnits, drawdownUnits };
+}
+
 export class LiveDesk {
   private readonly policy: Policy;
   private credentials: AuthCredentials;
@@ -66,6 +90,14 @@ export class LiveDesk {
   private error: string | undefined;
   private readonly streamErrors: Partial<Record<StreamKind, string>> = {};
   private activeFixtureId: string | null = null;
+  /** Portfolio-level kill latch ACROSS every fixture — see enforcePortfolioRisk(). */
+  private portfolioKilled = false;
+  /** Aggregate proof-failure-rate circuit breaker — see recordProofOutcome(). Distinct from
+   *  per-message admission failure (proofErrors): this catches a systemically degraded proof
+   *  service, not one bad message. Operator-restart-only, like every other kill latch here. */
+  private proofCircuitKilled = false;
+  private proofCircuitReason: string | undefined;
+  private readonly recentProofOutcomes: boolean[] = [];
   private readonly tapes = new Map<string, FeedMessage[]>();
   private readonly messageIds = new Map<string, Set<string>>();
   private readonly results = new Map<string, EngineResult>();
@@ -74,6 +106,11 @@ export class LiveDesk {
   private readonly clientLoops: Promise<void>[] = [];
   private readonly listeners = new Set<Listener>();
   private readonly anchorEvidence = new Map<string, AnchorEvidence>();
+  private readonly preMatchCommitments = new Map<string, PreMatchCommitmentEvidence>();
+  private readonly checkpoints = new Map<string, CheckpointAnchorEvidence[]>();
+  private readonly lastCheckpointSeq = new Map<string, number>();
+  private readonly pendingCheckpointFixtureIds = new Set<string>();
+  private checkpointQueue: Promise<void> = Promise.resolve();
   private readonly pendingAnchorIds = new Set<string>();
   private readonly proofErrors = new Map<string, string>();
   private readonly securityCounters = {
@@ -81,11 +118,29 @@ export class LiveDesk {
     sourceProofFailures: 0,
     sourceAdmissionFailures: 0,
   };
+  /** Real timing, not estimated: time inside the TxLINE proof round-trip, and end-to-end time
+   *  from message receipt to a decision landing in the ledger (verify + admit + engine +
+   *  durable append) — the two numbers that actually decide whether the desk keeps up. */
+  private readonly proofVerificationLatencyMs = new LatencyHistogram(DEFAULT_LATENCY_BUCKETS_MS);
+  private readonly decisionLoopLatencyMs = new LatencyHistogram(DEFAULT_LATENCY_BUCKETS_MS);
   private anchorQueue: Promise<void> = Promise.resolve();
+  private commitQueue: Promise<void> = Promise.resolve();
+  private readonly pendingCommitmentIds = new Set<string>();
   private readonly streams: Record<StreamKind, StreamState> = {
     scores: { connected: false, gapMs: 0, lastActivityAt: null },
     odds: { connected: false, gapMs: 0, lastActivityAt: null },
   };
+
+  /** Loaded once at construction from the same keypair used for on-chain anchoring — never
+   *  re-read per record. Undefined when no keypair is configured (records stay unsigned). */
+  private readonly signer: LedgerSigner | undefined;
+
+  /** Real, periodically-refreshed SOL balance of the anchoring keypair — anchoring/commit
+   *  transactions fail for lack of funds with no other visible symptom until attempted;
+   *  this surfaces the risk proactively on /health and /metrics instead. */
+  private walletLamports: number | null = null;
+  private walletBalanceCheckedAt: number | null = null;
+  private walletBalanceTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly config: LiveConfig,
@@ -94,6 +149,7 @@ export class LiveDesk {
   ) {
     this.credentials = credentials;
     this.policy = policy;
+    this.signer = loadLedgerSigner(config.keypairPath);
   }
 
   subscribe(listener: Listener): () => void {
@@ -102,7 +158,17 @@ export class LiveDesk {
   }
 
   async start(): Promise<void> {
+    recordPolicySnapshot(this.policy, join(CORPUS_DIR, "policy-snapshots.jsonl"), this.signer);
     this.loadAnchorEvidence();
+    this.loadPreMatchCommitments();
+    this.loadCheckpoints();
+    if (this.signer) {
+      void this.checkWalletBalance();
+      this.walletBalanceTimer = setInterval(
+        () => void this.checkWalletBalance(),
+        this.policy.exec.wallet_balance_check_interval_ms,
+      );
+    }
     for (const stream of ["scores", "odds"] as const) {
       const client = new SseClient({
         origin: this.config.origin,
@@ -126,8 +192,46 @@ export class LiveDesk {
   }
 
   async stop(): Promise<void> {
+    if (this.walletBalanceTimer) clearInterval(this.walletBalanceTimer);
     for (const client of this.clients) client.stop();
     await Promise.all(this.clientLoops);
+  }
+
+  /** Real getBalance() RPC call against the anchoring keypair. Failures are logged and
+   *  leave the previous cached balance in place rather than reporting a false zero. */
+  private async checkWalletBalance(): Promise<void> {
+    if (!this.signer) return;
+    try {
+      const connection = new Connection(this.config.rpcUrl, "confirmed");
+      const lamports = await connection.getBalance(new PublicKey(this.signer.publicKey), "confirmed");
+      this.walletLamports = lamports;
+      this.walletBalanceCheckedAt = Date.now();
+      if (lamports < this.policy.exec.wallet_low_balance_lamports) {
+        console.error(JSON.stringify({
+          event: "tissue.wallet_balance_low",
+          lamports,
+          threshold: this.policy.exec.wallet_low_balance_lamports,
+          pubkey: this.signer.publicKey,
+        }));
+      }
+      this.publish();
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "tissue.wallet_balance_check_failed",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  /** Full (unsliced) record hashes for a fixture's ledger — snapshot()/fixtureSnapshot() cap
+   *  the decisions array at the last 200 for transport size, but a Merkle inclusion proof for
+   *  an older decision needs every leaf back to genesis. */
+  getLedgerRecordHashes(fixtureId: string): readonly string[] | undefined {
+    return this.results.get(fixtureId)?.ledger.all().map((r) => r.hash);
+  }
+
+  getCheckpoints(fixtureId: string): readonly CheckpointAnchorEvidence[] {
+    return this.checkpoints.get(fixtureId) ?? [];
   }
 
   snapshot(): DeskSnapshot {
@@ -140,7 +244,7 @@ export class LiveDesk {
       : undefined;
     const status = this.error
       ? "error"
-      : anyGap
+      : this.portfolioKilled || anyGap
         ? "halted"
         : this.pendingAnchorIds.size > 0
           ? "verifying"
@@ -165,15 +269,36 @@ export class LiveDesk {
         pending: this.pendingAnchorIds.size,
         failed: this.proofErrors.size,
         verified: [...this.anchorEvidence.values()].filter((evidence) => evidence.result).length,
+        circuitKilled: this.proofCircuitKilled,
       },
       activeFixtureId: this.activeFixtureId,
       fixtures,
+      portfolio: this.portfolioSnapshot(),
+      wallet: {
+        pubkey: this.signer?.publicKey ?? null,
+        lamports: this.walletLamports,
+        low: this.walletLamports !== null && this.walletLamports < this.policy.exec.wallet_low_balance_lamports,
+        checkedAt: this.walletBalanceCheckedAt,
+      },
       ...(this.error ? { error: this.error } : {}),
     };
   }
 
   metrics(): Readonly<typeof this.securityCounters> {
     return { ...this.securityCounters };
+  }
+
+  latencyMetricsPrometheus(): string {
+    return [
+      this.proofVerificationLatencyMs.renderPrometheus(
+        "tissue_proof_verification_latency_ms",
+        "Time spent inside the TxLINE source-proof round-trip per message.",
+      ),
+      this.decisionLoopLatencyMs.renderPrometheus(
+        "tissue_decision_loop_latency_ms",
+        "End-to-end time from message receipt to a decision landing in the ledger (verify + admit + engine + durable append).",
+      ),
+    ].join("\n");
   }
 
   private onMessage(stream: StreamKind, message: FeedMessage): void {
@@ -218,6 +343,9 @@ export class LiveDesk {
       this.results.set(message.fixtureId, result);
       this.activeFixtureId = message.fixtureId;
       this.writeAnalystExport(message.fixtureId, result);
+      this.enforcePortfolioRisk();
+      this.maybeSubmitPreMatchCommitment(message.fixtureId, result);
+      this.maybeSubmitCheckpointAnchor(message.fixtureId, result);
     } catch (error) {
       // The session mutates before durable writes. Discard every derived in-memory view so a
       // subsequent attempt must rebuild from the authoritative on-disk corpus and ledger.
@@ -241,6 +369,7 @@ export class LiveDesk {
     const session = createEngineSession(this.policy, this.config.network, {
       feedGapHalt: true,
       simulateFills: false,
+      ...(this.signer ? { signer: this.signer } : {}),
     });
     const messageIds = new Set<string>();
     if (tape.length > 0) {
@@ -265,10 +394,41 @@ export class LiveDesk {
       this.results.set(fixtureId, rebuilt);
       this.activeFixtureId ??= fixtureId;
     }
+    // A newly discovered fixture must not sneak past an already-tripped portfolio kill.
+    if (this.portfolioKilled) session.kill();
     this.sessions.set(fixtureId, session);
     this.tapes.set(fixtureId, tape);
     this.messageIds.set(fixtureId, messageIds);
     return tape;
+  }
+
+  /**
+   * Latches every session killed if the portfolio-level policy caps are breached — a loss
+   * on one fixture then halts every concurrently running fixture, not just itself.
+   * Operator-restart-only: never auto-resets once tripped (same discipline as the
+   * per-fixture drawdown kill).
+   */
+  private enforcePortfolioRisk(): void {
+    if (this.portfolioKilled) return;
+    const { exposureUnits, drawdownUnits } = sumPortfolioRisk(this.results.values());
+    if (
+      exposureUnits > this.policy.risk.portfolio_exposure_cap_units
+      || drawdownUnits >= this.policy.risk.portfolio_drawdown_kill_units
+    ) {
+      this.portfolioKilled = true;
+      for (const session of this.sessions.values()) session.kill();
+      console.error(JSON.stringify({
+        event: "tissue.portfolio_kill",
+        exposureUnits,
+        drawdownUnits,
+        exposureCapUnits: this.policy.risk.portfolio_exposure_cap_units,
+        drawdownKillUnits: this.policy.risk.portfolio_drawdown_kill_units,
+      }));
+    }
+  }
+
+  private portfolioSnapshot(): DeskSnapshot["portfolio"] {
+    return { ...sumPortfolioRisk(this.results.values()), killed: this.portfolioKilled };
   }
 
   private assertAppendOnly(
@@ -313,21 +473,56 @@ export class LiveDesk {
   }
 
   private refreshError(): void {
-    const errors = [...Object.values(this.streamErrors), ...this.proofErrors.values()];
+    const errors = [
+      ...Object.values(this.streamErrors),
+      ...this.proofErrors.values(),
+      ...(this.proofCircuitReason ? [this.proofCircuitReason] : []),
+    ];
     this.error = errors.length > 0 ? errors.join("; ") : undefined;
+  }
+
+  /**
+   * Aggregate breaker over a rolling window of source-proof outcomes. A single failed proof
+   * already blocks just that message (queueVerification, below) — this fires when the RATE of
+   * recent failures crosses policy.risk.proof_failure_rate_halt, meaning the proof service
+   * itself is likely degraded, not that one message happened to be bad. Once tripped, stays
+   * tripped for this process (operator-restart-only, same as portfolioKilled).
+   */
+  private recordProofOutcome(success: boolean): void {
+    this.recentProofOutcomes.push(success);
+    if (this.recentProofOutcomes.length > this.policy.risk.proof_failure_window) this.recentProofOutcomes.shift();
+    if (this.proofCircuitKilled) return;
+    if (this.recentProofOutcomes.length < this.policy.risk.proof_failure_min_samples) return;
+    const failures = this.recentProofOutcomes.filter((ok) => !ok).length;
+    const rate = failures / this.recentProofOutcomes.length;
+    if (rate < this.policy.risk.proof_failure_rate_halt) return;
+    this.proofCircuitKilled = true;
+    this.proofCircuitReason = `proof-failure-rate: ${failures}/${this.recentProofOutcomes.length} recent source proofs failed (>= ${Math.round(this.policy.risk.proof_failure_rate_halt * 100)}% threshold) — halted, operator restart required`;
+    console.error(JSON.stringify({
+      event: "tissue.proof_circuit_halt",
+      failures,
+      samples: this.recentProofOutcomes.length,
+      rate,
+    }));
+    this.refreshError();
   }
 
   private queueVerification(stream: StreamKind, message: FeedMessage): void {
     if (this.pendingAnchorIds.has(message.msgId)) return;
     this.pendingAnchorIds.add(message.msgId);
+    const receivedAt = Date.now();
     this.anchorQueue = this.anchorQueue.catch(() => undefined).then(async () => {
+      const verifyStart = Date.now();
       const evidence = await this.verifySource(message, false);
+      this.proofVerificationLatencyMs.observe(Date.now() - verifyStart);
       this.anchorEvidence.set(message.msgId, evidence);
       this.pendingAnchorIds.delete(message.msgId);
       this.persistAnchorEvidence(evidence);
       if (evidence.result) {
         this.proofErrors.delete(message.msgId);
+        this.recordProofOutcome(true);
         await this.commitMessage(stream, admittedSourceMessage(message));
+        this.decisionLoopLatencyMs.observe(Date.now() - receivedAt);
         return;
       }
       console.error(JSON.stringify({
@@ -338,6 +533,7 @@ export class LiveDesk {
       }));
       this.securityCounters.sourceProofFailures += 1;
       this.proofErrors.set(message.msgId, `source proof ${message.msgId} failed`);
+      this.recordProofOutcome(false);
       this.refreshError();
       this.updatedAt = Date.now();
       this.publish();
@@ -429,6 +625,104 @@ export class LiveDesk {
     appendFileSync(join(CORPUS_DIR, "anchor-evidence.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
   }
 
+  private loadPreMatchCommitments(): void {
+    const path = join(CORPUS_DIR, "pre-match-commitments.jsonl");
+    if (!existsSync(path)) return;
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const evidence = JSON.parse(line) as PreMatchCommitmentEvidence;
+      if (evidence.network === this.config.network) this.preMatchCommitments.set(evidence.fixtureId, evidence);
+    }
+  }
+
+  private persistPreMatchCommitment(evidence: PreMatchCommitmentEvidence): void {
+    mkdirSync(CORPUS_DIR, { recursive: true });
+    appendFileSync(join(CORPUS_DIR, "pre-match-commitments.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+  }
+
+  /**
+   * Submit the "Proof of Edge" commitment exactly once per fixture, as soon as the engine
+   * has produced one (deterministic replay/engine.ts::preparePreMatchCommitment). Serialized
+   * through its own queue so concurrent messages for different fixtures don't race the same
+   * keypair's nonce/blockhash.
+   */
+  private maybeSubmitPreMatchCommitment(fixtureId: string, result: EngineResult): void {
+    if (!result.preMatchCommitment) return;
+    if (this.preMatchCommitments.has(fixtureId) || this.pendingCommitmentIds.has(fixtureId)) return;
+    const commitment = result.preMatchCommitment;
+    this.pendingCommitmentIds.add(fixtureId);
+    this.commitQueue = this.commitQueue.catch(() => undefined).then(async () => {
+      const evidence = await submitPreMatchCommitment(commitment, {
+        rpcUrl: this.config.rpcUrl,
+        network: this.config.network,
+        keypairPath: this.config.keypairPath,
+      });
+      this.pendingCommitmentIds.delete(fixtureId);
+      this.preMatchCommitments.set(fixtureId, evidence);
+      this.persistPreMatchCommitment(evidence);
+      if (evidence.status === "failed") {
+        console.error(JSON.stringify({ event: "tissue.pre_match_commitment_failed", fixtureId, error: evidence.error }));
+      }
+      this.updatedAt = Date.now();
+      this.publish();
+    });
+  }
+
+  private loadCheckpoints(): void {
+    const path = join(CORPUS_DIR, "checkpoint-anchors.jsonl");
+    if (!existsSync(path)) return;
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const evidence = JSON.parse(line) as CheckpointAnchorEvidence;
+      if (evidence.network !== this.config.network) continue;
+      const existing = this.checkpoints.get(evidence.fixtureId) ?? [];
+      existing.push(evidence);
+      this.checkpoints.set(evidence.fixtureId, existing);
+      const last = this.lastCheckpointSeq.get(evidence.fixtureId) ?? -1;
+      if (evidence.seq > last) this.lastCheckpointSeq.set(evidence.fixtureId, evidence.seq);
+    }
+  }
+
+  private persistCheckpoint(evidence: CheckpointAnchorEvidence): void {
+    mkdirSync(CORPUS_DIR, { recursive: true });
+    appendFileSync(join(CORPUS_DIR, "checkpoint-anchors.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+  }
+
+  /**
+   * Fires at most one checkpoint submission in flight per fixture at a time, serialized
+   * through its own queue (same reasoning as maybeSubmitPreMatchCommitment: one keypair, one
+   * blockhash/nonce lane — concurrent fixtures must not race it).
+   */
+  private maybeSubmitCheckpointAnchor(fixtureId: string, result: EngineResult): void {
+    const interval = this.policy.exec.checkpoint_interval_decisions;
+    const seq = result.ledger.length - 1;
+    if (seq < 0) return;
+    const lastSeq = this.lastCheckpointSeq.get(fixtureId) ?? null;
+    if (!isCheckpointDue(seq, lastSeq, interval)) return;
+    if (this.pendingCheckpointFixtureIds.has(fixtureId)) return;
+    this.pendingCheckpointFixtureIds.add(fixtureId);
+    this.lastCheckpointSeq.set(fixtureId, seq);
+    const recordHashes = result.ledger.all().slice(0, seq + 1).map((r) => r.hash);
+    const commitment = prepareCheckpointAnchor(fixtureId, seq, recordHashes);
+    this.checkpointQueue = this.checkpointQueue.catch(() => undefined).then(async () => {
+      const evidence = await submitCheckpointAnchor(commitment, {
+        rpcUrl: this.config.rpcUrl,
+        network: this.config.network,
+        keypairPath: this.config.keypairPath,
+      });
+      this.pendingCheckpointFixtureIds.delete(fixtureId);
+      const existing = this.checkpoints.get(fixtureId) ?? [];
+      existing.push(evidence);
+      this.checkpoints.set(fixtureId, existing);
+      this.persistCheckpoint(evidence);
+      if (evidence.status === "failed") {
+        console.error(JSON.stringify({ event: "tissue.checkpoint_anchor_failed", fixtureId, seq, error: evidence.error }));
+      }
+      this.updatedAt = Date.now();
+      this.publish();
+    });
+  }
+
   private fixtureSnapshot(fixtureId: string, result: EngineResult): FixtureSnapshot {
     const records = result.ledger.all();
     return {
@@ -449,6 +743,8 @@ export class LiveDesk {
       headHash: result.ledger.headHash,
       hashChainOk: verifyChain(records).ok,
       finalScore: result.finalScore,
+      preMatchCommitment: this.preMatchCommitments.get(fixtureId) ?? null,
+      checkpoints: this.checkpoints.get(fixtureId) ?? [],
     };
   }
 

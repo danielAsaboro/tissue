@@ -9,7 +9,8 @@ import { loadPolicy } from "../config/policy.js";
 import { readLedgerJsonl } from "../ledger/ledger.js";
 import { runEngine } from "../replay/engine.js";
 import type { LiveConfig } from "./config.js";
-import { admittedSourceMessage, assertPersistedLedgerPrefix, LiveDesk, reconcilePersistedLedger } from "./liveDesk.js";
+import { admittedSourceMessage, assertPersistedLedgerPrefix, LiveDesk, reconcilePersistedLedger, sumPortfolioRisk } from "./liveDesk.js";
+import { generateSyntheticCorpus } from "../ingest/synthetic.js";
 
 const FIXTURE = "LIVE-INTEGRATION-1";
 const servers: Server[] = [];
@@ -65,6 +66,24 @@ function score(msgId: string, ts: number, minute: number): ScoreMessage {
   };
 }
 
+describe("sumPortfolioRisk — pure aggregation across fixtures", () => {
+  it("sums exposure and drawdown independently per fixture, not just the last one seen", () => {
+    const policy = loadPolicy();
+    const a = runEngine(generateSyntheticCorpus("PORTFOLIO-A"), policy);
+    const b = runEngine(generateSyntheticCorpus("PORTFOLIO-B"), policy);
+    const aLatest = a.ledger.all().at(-1)!.state.exposure;
+    const bLatest = b.ledger.all().at(-1)!.state.exposure;
+
+    const summed = sumPortfolioRisk([a, b]);
+    expect(summed.exposureUnits).toBe(aLatest.perFixtureUnits + bLatest.perFixtureUnits);
+    expect(summed.drawdownUnits).toBe(aLatest.drawdownUnits + bLatest.drawdownUnits);
+  });
+
+  it("returns zero for no fixtures and ignores a fixture with no decisions yet", () => {
+    expect(sumPortfolioRisk([])).toEqual({ exposureUnits: 0, drawdownUnits: 0 });
+  });
+});
+
 afterEach(async () => {
   for (const desk of desks.splice(0)) desk.stop();
   for (const stream of streams) stream.end();
@@ -76,6 +95,7 @@ afterEach(async () => {
   rmSync(join(CORPUS_DIR, "anchor-evidence.json"), { force: true });
   rmSync(join(CORPUS_DIR, "anchor-evidence.jsonl"), { force: true });
   rmSync(join(CORPUS_DIR, "live-state.json"), { force: true });
+  rmSync(join(CORPUS_DIR, "pre-match-commitments.jsonl"), { force: true });
 });
 
 describe("live desk integration", () => {
@@ -152,6 +172,11 @@ describe("live desk integration", () => {
     const metrics = await fetch(`http://127.0.0.1:${apiPort}/metrics`).then((response) => response.text());
     expect(metrics).toContain("tissue_source_proof_failures_total 2");
     expect(metrics).toContain("tissue_source_proofs_verified 0");
+    // Real timing, not a placeholder: exactly the 2 proof attempts above landed in the
+    // histogram (decision-loop latency stays 0 — both proofs failed, so no decision was ever
+    // appended to the ledger for this fixture).
+    expect(metrics).toContain("tissue_proof_verification_latency_ms_count 2");
+    expect(metrics).toContain("tissue_decision_loop_latency_ms_count 0");
     desk.stop();
   });
 
@@ -206,6 +231,44 @@ describe("live desk integration", () => {
     expect(desk.snapshot().fixtures).toHaveLength(0);
   });
 
+  it("halts the whole desk once the recent proof-failure rate crosses the circuit-breaker threshold", async () => {
+    const now = Date.now();
+    let scoresResponse: ServerResponse | undefined;
+    const txline = createServer((req, res) => {
+      if (req.url?.startsWith("/api/scores/stat-validation")) {
+        res.writeHead(503, { "content-type": "text/plain" });
+        res.end("proof fixture intentionally unavailable");
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/event-stream", connection: "keep-alive" });
+      streams.add(res);
+      if (req.url === "/api/scores/stream") scoresResponse = res;
+    });
+    const txlinePort = await bind(txline);
+    const policy = loadPolicy();
+    const desk = new LiveDesk(config(`http://127.0.0.1:${txlinePort}`), {
+      network: "devnet", jwt: "fixture-jwt", apiToken: "fixture-token",
+    }, policy);
+    desks.push(desk);
+    await desk.start();
+    await waitFor(() => Boolean(scoresResponse));
+
+    for (let i = 0; i < policy.risk.proof_failure_min_samples; i++) {
+      scoresResponse!.write(`id: score-fail-${i}\ndata: ${JSON.stringify({
+        FixtureId: FIXTURE, Id: `score-fail-${i}`, Ts: now + (i + 1) * 1_000, StatusId: 2,
+        Minute: i + 1, Stats: { "1": 0, "2": 0, "5": 0, "6": 0 },
+      })}\n\n`);
+      await waitFor(() => desk.snapshot().proofs.failed === i + 1);
+    }
+
+    const snapshot = desk.snapshot();
+    expect(snapshot.proofs.circuitKilled).toBe(true);
+    // Same "error" status class as any unresolved proof failure (see the earlier "refuses to
+    // admit..." test) — this is a systemic proof-service problem, not a risk-policy halt.
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.error).toContain("proof-failure-rate");
+  });
+
   it("refuses to erase a corrupted persisted decision chain", async () => {
     const now = Date.now();
     const existing = score("persisted-score", now, 1);
@@ -236,5 +299,128 @@ describe("live desk integration", () => {
     const recovered = readLedgerJsonl(ledgerPath);
     expect(recovered).toHaveLength(2);
     expect(recovered.at(-1)?.hash).toBe(rebuilt.ledger.headHash);
+  });
+
+  it("/arena computes a real head-to-head summary on demand from the fixture's corpus", async () => {
+    writeCorpus(FIXTURE, generateSyntheticCorpus(FIXTURE));
+    const liveConfig = config("http://127.0.0.1:1"); // unused — no SSE traffic in this test
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    desks.push(desk);
+    const api = createApiServer(desk, liveConfig);
+    const apiPort = await bind(api);
+
+    const response = await fetch(`http://127.0.0.1:${apiPort}/arena?fixtureId=${FIXTURE}`);
+    const body = await response.json() as { available: boolean; fixtureId?: string; clvEdgeBps?: number };
+    expect(response.status).toBe(200);
+    expect(body.available).toBe(true);
+    expect(body.fixtureId).toBe(FIXTURE);
+    expect(typeof body.clvEdgeBps).toBe("number");
+  });
+
+  it("/grade-card.svg renders a real SVG on demand from the fixture's corpus", async () => {
+    writeCorpus(FIXTURE, generateSyntheticCorpus(FIXTURE));
+    const liveConfig = config("http://127.0.0.1:1");
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    desks.push(desk);
+    const api = createApiServer(desk, liveConfig);
+    const apiPort = await bind(api);
+
+    const response = await fetch(`http://127.0.0.1:${apiPort}/grade-card.svg?fixtureId=${FIXTURE}`);
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("image/svg+xml");
+    expect(body).toContain("<svg");
+    expect(body).toContain(FIXTURE);
+  });
+
+  it("/arena reports unavailable for a fixture with no corpus, without throwing", async () => {
+    const liveConfig = config("http://127.0.0.1:1");
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    desks.push(desk);
+    const api = createApiServer(desk, liveConfig);
+    const apiPort = await bind(api);
+
+    const response = await fetch(`http://127.0.0.1:${apiPort}/arena?fixtureId=NO-SUCH-FIXTURE`);
+    const body = await response.json() as { available: boolean };
+    expect(response.status).toBe(404);
+    expect(body.available).toBe(false);
+  });
+
+  it("/record exposes a real, self-describing public export — schema, network, oracle program, and verification instructions — even with no fixtures yet", async () => {
+    const liveConfig = config("http://127.0.0.1:1");
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    desks.push(desk);
+    const api = createApiServer(desk, liveConfig);
+    const apiPort = await bind(api);
+
+    const response = await fetch(`http://127.0.0.1:${apiPort}/record`);
+    const body = await response.json() as {
+      schema: string;
+      network: string;
+      oracleProgramId: string;
+      memoProgramId: string;
+      howToVerify: string;
+      fixtures: unknown[];
+    };
+    expect(response.status).toBe(200);
+    expect(body.schema).toBe("tissue.record.v1");
+    expect(body.network).toBe("devnet");
+    // The real devnet txoracle program ID, not a placeholder.
+    expect(body.oracleProgramId).toBe("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
+    expect(body.memoProgramId).toBe("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+    expect(body.howToVerify).toContain("sha256(prevHash");
+    expect(body.howToVerify).toContain("/ledger/proof");
+    expect(body.fixtures).toEqual([]);
+  });
+
+  it("reports an honest null wallet balance when no keypair is configured, rather than a fabricated zero", async () => {
+    const liveConfig = config("http://127.0.0.1:1");
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    desks.push(desk);
+    const snapshot = desk.snapshot();
+    expect(snapshot.wallet).toEqual({ pubkey: null, lamports: null, low: false, checkedAt: null });
+  });
+});
+
+/**
+ * Real devnet RPC call against the real anchoring keypair — opt-in only (TISSUE_KEYPAIR_PATH),
+ * matching the SURFPOOL_RPC_URL / TISSUE_LIVE_MODEL_BASE_URL pattern used elsewhere in this
+ * suite: real infra, never in default CI, since it depends on external network availability
+ * this test environment doesn't guarantee.
+ */
+describe.runIf(Boolean(process.env.TISSUE_KEYPAIR_PATH))("wallet balance watchdog — real devnet RPC", () => {
+  it("fetches a real, non-negative balance for the configured keypair and reports it on /state and /health", async () => {
+    const keypairPath = process.env.TISSUE_KEYPAIR_PATH;
+    if (!keypairPath) throw new Error("TISSUE_KEYPAIR_PATH disappeared during the test");
+    const liveConfig: LiveConfig = {
+      mode: "live",
+      network: "devnet",
+      origin: "http://127.0.0.1:1",
+      port: 8788,
+      allowedOrigins: ["http://localhost:3000"],
+      rpcUrl: "https://api.devnet.solana.com",
+      anchorMode: "view",
+      keypairPath,
+    };
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    desks.push(desk);
+    const api = createApiServer(desk, liveConfig);
+    const apiPort = await bind(api);
+    await desk.start();
+    await waitFor(() => desk.snapshot().wallet.lamports !== null, 15_000);
+
+    const snapshot = desk.snapshot();
+    expect(snapshot.wallet.pubkey).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+    expect(snapshot.wallet.lamports).toBeGreaterThanOrEqual(0);
+    expect(snapshot.wallet.checkedAt).toBeGreaterThan(0);
+
+    const healthRes = await fetch(`http://127.0.0.1:${apiPort}/health`);
+    const health = await healthRes.json() as { wallet: { lamports: number | null } };
+    expect(health.wallet.lamports).toBe(snapshot.wallet.lamports);
+
+    const metricsRes = await fetch(`http://127.0.0.1:${apiPort}/metrics`);
+    const metricsText = await metricsRes.text();
+    expect(metricsText).toContain("tissue_wallet_balance_lamports");
+    expect(metricsText).not.toContain("tissue_wallet_balance_lamports -1");
   });
 });
