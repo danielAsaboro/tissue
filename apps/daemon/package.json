@@ -17,18 +17,23 @@
     "verify:score-source": "tsx scripts/verifyScoreSource.ts",
     "surfpool:smoke": "tsx scripts/surfpoolSmoke.ts",
     "test:surfpool": "SURFPOOL_RPC_URL=http://127.0.0.1:8899 vitest run src/exec/surfpoolAnchoring.test.ts --reporter=verbose",
+    "test:slip:surfpool": "TISSUE_RUN_SLIP_SURFPOOL_TESTS=1 vitest run src/exec/slipExec.surfpool.test.ts --reporter=verbose",
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tissue/shared": "workspace:*",
     "@coral-xyz/anchor": "0.32.1",
+    "@solana/kit": "^6.10.0",
     "@solana/web3.js": "^1.98.0",
+    "@tissue/shared": "workspace:*",
+    "@tissue/slip": "workspace:*",
     "smol-toml": "^1.3.1",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@solana/spl-token": "^0.4.9",
+    "@solana/surfpool": "1.4.0",
     "@types/node": "^22.13.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",

@@ -2,10 +2,14 @@ import { address, type Address, type Instruction } from "@solana/kit";
 import {
   calculateMarket,
   calculateMarketRulebookHash,
+  calculateRulebookHash,
   createSlipClient,
   formatAmount,
   parseAmount,
   type BuyTicketRequest,
+  type CompiledRulebook,
+  type CreateMarketRequest,
+  type MarketInstructions,
   type MarketReferenceV1,
   type MarketSnapshot,
   type SlipClient,
@@ -58,8 +62,9 @@ export interface TissueSlipTicketView {
 }
 
 export interface PreparedSlipAction {
-  readonly kind: "buy" | "claim" | "refund" | "resolve" | "void";
+  readonly kind: "create" | "buy" | "claim" | "refund" | "resolve" | "void";
   readonly instructions: readonly Instruction[];
+  readonly market?: string;
   readonly ticket?: string;
 }
 
@@ -70,6 +75,7 @@ export interface SlipReader {
   listWalletTickets(owner: Address): Promise<TicketSnapshot[]>;
   verifyReference(input: unknown): Promise<{ reference: MarketReferenceV1; market: MarketSnapshot }>;
   watchMarket(market: Address, listener: (snapshot: MarketSnapshot) => void, onError?: (error: Error) => void): () => void;
+  createMarket(request: CreateMarketRequest): Promise<MarketInstructions>;
   buyTicket(request: BuyTicketRequest): Promise<{ readonly ticket: Address; readonly instructions: readonly Instruction[] }>;
   claimTicket(input: { market: Address; ticket: Address; caller: Address }): Promise<readonly Instruction[]>;
   claimRefund(input: { market: Address; ticket: Address; caller: Address }): Promise<readonly Instruction[]>;
@@ -117,6 +123,17 @@ export class TissueSlipConsumer {
     return this.client.watchMarket(address(marketAddress), (snapshot) => {
       void this.view(snapshot, stake).then(listener, onError);
     }, onError);
+  }
+
+  /** Compiles and hashes the rulebook, then prepares the real create-market instructions. */
+  async prepareCreateMarket(request: {
+    id: bigint;
+    creator: string;
+    rulebook: Omit<CompiledRulebook, "hash">;
+  }): Promise<PreparedSlipAction> {
+    const rulebook: CompiledRulebook = { ...request.rulebook, hash: await calculateRulebookHash(request.rulebook) };
+    const prepared = await this.client.createMarket({ id: request.id, creator: address(request.creator), rulebook });
+    return { kind: "create", market: prepared.market, instructions: prepared.instructions };
   }
 
   async prepareBuy(request: Omit<BuyTicketRequest, "market" | "buyer" | "amount"> & { market: string; buyer: string; amount: string }): Promise<PreparedSlipAction> {

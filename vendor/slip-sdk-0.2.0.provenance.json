@@ -2,9 +2,8 @@
   "package": "@slip/sdk",
   "version": "0.2.0",
   "tarball": "slip-sdk-0.2.0.tgz",
-  "slipBaseCommit": "e4680b8e2a95414c4af8a67f8986b8149ccbd64b",
-  "packedSdkSourcePatchSha256": "0b2f308c1283ac02b5584e42d8b1db9666d70c120aa4e427ca7f97b77007fd32",
-  "sha512": "d9eca521baf912fe1a3bff4f08223bf7b31e1ae422ad0703565a9058f04da6ed9858a3658ae3eba76ad3381084fa4bf28418382b1a261e4e01351f21069201dd",
-  "npmIntegrity": "sha512-2eylIbr5Ev4aO/9PCCI797MeGuQirQcDVlqQWPBNpu2YWKNliuPrp2rTOBCE+kvyhBg4KxomHk4BNR8hBpIB3Q==",
-  "note": "The user requested staged changes without commits. The base commit and complete staged packages/sdk patch hash identify the packed source."
+  "slipCommit": "fab2f69ba234e188645208586da70be43bc7c26d",
+  "slipCommitMessage": "Merge remote-tracking branch 'origin/main'",
+  "sha512": "6432fe14434221b513a7f6aa1619b012591181ca3f732b38fbe25c14c4976450d7a31e730764c356accc3c94b59d3ad91b8259ec520edf3a8e7c72636aeec409",
+  "note": "Re-packed 2026-07-18 to fix a stale-codegen bug: the previous tarball (base commit e4680b8, per its own provenance a staged/uncommitted patch) predated the settlement_mode field being added to MarketExpression in both the Rust program and the SDK's committed codama-generated bindings. The stale packed dist/generated/types/marketExpression.js silently omitted settlement_mode from its Borsh encoder, corrupting every create_market instruction built through it (Anchor error 102, InstructionDidNotDeserialize) -- discovered via a real Surfpool integration test against the vendored program. Slip's own source (packages/sdk/src) was already correct; this was purely a stale packed-artifact problem, fixed by rebuilding (`pnpm --filter @slip/sdk build`) and repacking (`pnpm pack`) from current Slip HEAD, no Slip source changes required."
 }

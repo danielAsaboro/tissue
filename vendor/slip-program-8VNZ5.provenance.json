@@ -1,0 +1,13 @@
+{
+  "program": "@slip/program (Anchor program \"slip\")",
+  "programId": "8VNZ5VseAcFaYhAZxetgE5N8eiD17ZZNchGhoatYUUXw",
+  "artifact": "slip-program-8VNZ5.so",
+  "idl": "slip-program-8VNZ5.idl.json",
+  "sourceCommit": "25eae67aee9d912797ca984d5a5af1e5af3786ea",
+  "sourceCommitMessage": "Replace Option::is_none_or with map_or for SBF rustc",
+  "sha256": {
+    "slip-program-8VNZ5.so": "565585628b5ee49bc14e30422af1fda1cf95f8219f8bcd648f2ec9cd65bb835a",
+    "slip-program-8VNZ5.idl.json": "8586d046d786db7ab30852839082e1aadf5e8ed6efd8873ff4b9c13fb50213f0"
+  },
+  "note": "Compiled via `cargo build-sbf` from the sibling slip/program repository (same monorepo family, separate hackathon submission). Deployed by Tissue's Surfpool integration tests at the fixed program ID above to rehearse real end-to-end execution against a real Slip market — this is not a Tissue-authored program. The program's own Surfpool test suite (slip/program/tests/slip.surfpool.test.ts) deploys the identical artifact at the identical program ID."
+}
