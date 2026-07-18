@@ -15,6 +15,13 @@ const INPUT_SHAPES: Record<string, ZodRawShape> = {
   get_recent_decisions: { fixture_id: z.string().max(128).optional(), limit: z.number().int().min(1).max(200).optional() },
   get_signal_class_stats: { signal_class: z.string().max(64).optional(), fixture_id: z.string().max(128).optional() },
   query_ledger_by_fixture: { fixture_id: z.string().min(1).max(128) },
+  find_similar_decisions: {
+    fixture_id: z.string().min(1).max(128),
+    seq: z.number().int().min(0),
+    minute_tolerance: z.number().int().min(0).max(200).optional(),
+    edge_tolerance_bps: z.number().int().min(0).max(100_000).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  },
   list_slip_markets: {
     fixture_id: z.string().regex(/^[1-9]\d{0,18}$/).optional(),
     status: z.enum(["open", "resolved", "voided"]).optional(),

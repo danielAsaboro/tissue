@@ -14,8 +14,9 @@ export const ANALYST_SKILLS: readonly AnalystSkill[] = [
       "Start with the narrowest fixture or recent-decision query that can answer the question.",
       "Cite sequence and hash for every decision claim.",
       "Never convert narration into a recommendation or new decision.",
+      "'Has this pattern happened before' is a structured recall query (same class, minute, edge tolerance), never a fabricated semantic-similarity claim.",
     ],
-    tools: ["get_recent_decisions", "get_signal_class_stats", "query_ledger_by_fixture"],
+    tools: ["get_recent_decisions", "get_signal_class_stats", "query_ledger_by_fixture", "find_similar_decisions"],
   },
   {
     id: "slip-market-intelligence",

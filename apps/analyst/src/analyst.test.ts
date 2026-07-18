@@ -20,7 +20,8 @@ function makeExport(): AnalystExport {
     ts: (1000 + seq) as never,
     action: action as never,
     ...(radarClass ? { radarClass: radarClass as never } : {}),
-    state: { minute: seq, homeScore: 1, awayScore: 0, homeReds: 0, awayReds: 0, inventory: { bySelection: {}, netUnits: 0 }, exposure: { perMarketUnits: {}, perFixtureUnits: 0, openIntents: 0, realizedPnlUnits: 0, peakEquityUnits: 0, drawdownUnits: 0 }, feedGapMs: 0 },
+    policyHash: "p".repeat(64),
+    state: { minute: seq, homeScore: 1, awayScore: 0, homeReds: 0, awayReds: 0, inventory: { bySelection: {}, netUnits: 0 }, exposure: { perMarketUnits: {}, perFixtureUnits: 0, openIntents: 0, realizedPnlUnits: 0, peakEquityUnits: 0, drawdownUnits: 0 }, feedGapMs: 0, matchPhase: "regulation" as const, stoppageActive: false, mutualDangerActive: false, narrativeRegime: "neutral" as const },
     tissueProb: 6000 as never,
     marketProb: 5500 as never,
     edgeBps: 500,
@@ -66,6 +67,7 @@ describe("read-only BY CONSTRUCTION", () => {
 
   it("the tool surface has only ledger and on-chain reads, with no write/execute/post authority", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
+      "find_similar_decisions",
       "get_recent_decisions",
       "get_signal_class_stats",
       "inspect_slip_market",
@@ -113,6 +115,85 @@ describe("tools return grounded data", () => {
     const late = stats.find((s) => s.signal_class === "late-reaction");
     expect(late?.n_signals).toBe(1);
     expect(late?.n_decisions).toBe(1);
+    db.close();
+  });
+});
+
+describe("find_similar_decisions — structured pattern recall, not fabricated embeddings", () => {
+  let patternDbPath: string;
+  beforeAll(() => {
+    const dir = mkdtempSync(join(tmpdir(), "tissue-analyst-similar-"));
+    patternDbPath = join(dir, "analyst.db");
+    const decision = (seq: number, minute: number, edgeBps: number, radarClass?: string) => ({
+      seq,
+      triggerMsgId: `m${seq}`,
+      triggerHash: `th${seq}`,
+      triggerNetwork: "devnet" as const,
+      ts: (1000 + seq) as never,
+      action: "POST" as never,
+      ...(radarClass ? { radarClass: radarClass as never } : {}),
+      policyHash: "p".repeat(64),
+      state: { minute, homeScore: 1, awayScore: 0, homeReds: 0, awayReds: 0, inventory: { bySelection: {}, netUnits: 0 }, exposure: { perMarketUnits: {}, perFixtureUnits: 0, openIntents: 0, realizedPnlUnits: 0, peakEquityUnits: 0, drawdownUnits: 0 }, feedGapMs: 0, matchPhase: "regulation" as const, stoppageActive: false, mutualDangerActive: false, narrativeRegime: "neutral" as const },
+      tissueProb: 6000 as never,
+      marketProb: 5500 as never,
+      edgeBps,
+      intents: [],
+      simulated: true,
+      prevHash: seq === 0 ? "0".repeat(64) : `hash${seq - 1}`,
+      hash: `hash${seq}`,
+    });
+    materializeExports(patternDbPath, [{
+      fixtureId: "PATTERN-FX",
+      generatedAtMsgId: "m5",
+      decisions: [
+        decision(0, 40, 300, "late-reaction"), // reference
+        decision(1, 41, 320, "late-reaction"), // close: same class, minute +1, edge +20
+        decision(2, 85, 300, "late-reaction"), // far minute, excluded by default tolerance
+        decision(3, 40, 300, "overreaction"), // different class, excluded
+        decision(4, 42, 2000, "late-reaction"), // far edge, excluded by default tolerance
+      ],
+      radarEvents: [],
+      grade: {
+        generatedAtMsgId: "m5",
+        clv: { n: 0, meanClvBps: 0, medianClvBps: 0, p25Bps: 0, p75Bps: 0, pctPositive: 0 },
+        brier: { brier: 0, reliability: 0, resolution: 0, uncertainty: 0, bins: [] },
+        latency: [],
+        perClass: [],
+        pnl: { realizedUnits: 0, matchedIntents: 0, settlementTxSigs: [], simulated: true },
+      },
+      finalScore: { home: 1, away: 0 },
+    }]);
+  });
+
+  it("returns only decisions matching class and within default minute/edge tolerance, ranked by distance, excluding the reference itself", () => {
+    const db = new ReadOnlyLedgerDb(patternDbPath);
+    const rows = db.findSimilarDecisions("PATTERN-FX", 0);
+    expect(rows.map((r) => r.seq)).toEqual([1]);
+    db.close();
+  });
+
+  it("widening tolerance surfaces more real matches, never a fabricated one", () => {
+    const db = new ReadOnlyLedgerDb(patternDbPath);
+    const rows = db.findSimilarDecisions("PATTERN-FX", 0, { minuteToleranceMin: 60, edgeToleranceBps: 5000 });
+    expect(new Set(rows.map((r) => r.seq))).toEqual(new Set([1, 2, 4]));
+    // Still excludes the different-class decision even with wide tolerance.
+    expect(rows.map((r) => r.seq)).not.toContain(3);
+    db.close();
+  });
+
+  it("returns no rows for a nonexistent reference decision rather than throwing", () => {
+    const db = new ReadOnlyLedgerDb(patternDbPath);
+    expect(db.findSimilarDecisions("PATTERN-FX", 999)).toEqual([]);
+    db.close();
+  });
+
+  it("is exposed as a citable, read-only MCP tool", () => {
+    const tool = TOOL_BY_NAME.get("find_similar_decisions")!;
+    expect(tool).toBeDefined();
+    const db = new ReadOnlyLedgerDb(patternDbPath);
+    const result = tool.handler({ db, slip: null }, { fixture_id: "PATTERN-FX", seq: 0 }) as { rows: unknown[]; citations: { seq: number; hash: string; fixtureId: string }[] };
+    expect(result.citations).toHaveLength(1);
+    expect(result.citations[0]).toMatchObject({ seq: 1, fixtureId: "PATTERN-FX" });
     db.close();
   });
 });

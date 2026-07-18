@@ -77,10 +77,14 @@ export async function runAnalystQuery(
     }
   }
 
-  // Ran out of rounds — return the last assistant text if any.
+  // Ran out of rounds — return the last assistant text if any. A round that made tool
+  // calls but had no accompanying text pushes content: "" (line 54), which is falsy but
+  // NOT nullish, so a plain `??` here would silently return an empty string instead of
+  // this fallback — check for a real non-empty answer explicitly.
   const last = [...messages].reverse().find((m) => m.role === "assistant");
+  const lastContent = last?.content ?? "";
   return {
-    answer: last?.content ?? "(analyst reached the tool-loop limit without a final answer)",
+    answer: lastContent.trim().length > 0 ? lastContent : "(analyst reached the tool-loop limit without a final answer)",
     citations,
     toolCalls,
     providers,

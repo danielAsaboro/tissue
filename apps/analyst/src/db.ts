@@ -133,6 +133,53 @@ export class ReadOnlyLedgerDb {
     return { hit_rate: row.hit_rate, mean_clv_bps: Math.round(row.mean_clv_bps ?? 0) };
   }
 
+  /**
+   * "Have we seen this pattern before?" — real, explainable pattern recall over the
+   * read-only projection. This is deliberately NOT vector/embedding search: there is no
+   * embedding model wired into this project, and fabricating a "semantic similarity" claim
+   * without a real embedding pipeline would be exactly the kind of unverifiable claim this
+   * project refuses to make elsewhere (see the informed-flow/stale-quote adaptations in
+   * SUBMISSION.md). Similarity here is structured and auditable: same radar class (or same
+   * action when the reference has none), match-minute within tolerance, and edge magnitude
+   * within tolerance — ranked by combined distance. Every row returned is a real past
+   * decision with its own hash-chain citation, same as every other tool here.
+   */
+  findSimilarDecisions(
+    fixtureId: string,
+    seq: number,
+    opts: { minuteToleranceMin?: number; edgeToleranceBps?: number; limit?: number } = {},
+  ): DecisionRow[] {
+    const reference = this.db
+      .prepare(`SELECT * FROM decisions WHERE fixture_id = ? AND seq = ?`)
+      .get(fixtureId, seq) as DecisionRow | undefined;
+    if (!reference) return [];
+    const minuteTolerance = Math.max(0, opts.minuteToleranceMin ?? 10);
+    const edgeTolerance = Math.max(0, opts.edgeToleranceBps ?? 100);
+    const limit = Math.max(1, Math.min(50, Math.floor(opts.limit ?? 10)));
+    const classFilter = reference.radar_class !== null
+      ? "d.radar_class = ?"
+      : "d.radar_class IS NULL AND d.action = ?";
+    const classParam = reference.radar_class !== null ? reference.radar_class : reference.action;
+    return this.db
+      .prepare(
+        `SELECT * FROM decisions d
+         WHERE ${classFilter}
+           AND NOT (d.fixture_id = ? AND d.seq = ?)
+           AND ABS(d.minute - ?) <= ?
+           AND ABS(d.edge_bps - ?) <= ?
+         ORDER BY ABS(d.minute - ?) + ABS(d.edge_bps - ?) ASC, d.ts DESC
+         LIMIT ?`,
+      )
+      .all(
+        classParam,
+        fixtureId, seq,
+        reference.minute, minuteTolerance,
+        reference.edge_bps, edgeTolerance,
+        reference.minute, reference.edge_bps,
+        limit,
+      ) as unknown as DecisionRow[];
+  }
+
   private decisionCountForClass(signalClass: string, fixtureId: string | undefined): number {
     const sql = fixtureId
       ? `SELECT COUNT(*) AS n FROM decisions WHERE radar_class = ? AND fixture_id = ?`
