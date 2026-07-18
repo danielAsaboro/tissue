@@ -14,9 +14,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tissue/slip": "workspace:*",
-    "@tissue/shared": "workspace:*",
+    "@ai-sdk/openai-compatible": "3.0.11",
     "@modelcontextprotocol/sdk": "^1.0.4",
+    "@tissue/shared": "workspace:*",
+    "@tissue/slip": "workspace:*",
+    "ai": "7.0.28",
     "zod": "^4.4.3"
   },
   "devDependencies": {

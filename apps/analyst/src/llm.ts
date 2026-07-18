@@ -1,6 +1,6 @@
 /**
- * Thin LLM client. Groq (primary) and DGrid (fallback) are BOTH OpenAI-compatible, so one
- * request shape covers both — try Groq first, and on error / 429 / timeout retry via DGrid.
+ * AI SDK 7 model boundary. Groq (primary) and DGrid (fallback) are both OpenAI-compatible,
+ * so one provider adapter covers both — try Groq first, and on error / 429 / timeout retry via DGrid.
  * Which provider actually answered each call is logged and returned (demo-honest: a fallback
  * firing is visible, never hidden). Injectable so the agent can be tested without a network.
  *
@@ -9,6 +9,9 @@
  * the source of truth; env wins. (We avoid `groq/compound`: its built-in tools conflict with
  * our custom function-calling.)
  */
+
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { generateText, jsonSchema, tool, type ModelMessage, type ToolSet } from "ai";
 
 export interface ToolSpec {
   type: "function";
@@ -81,6 +84,16 @@ async function readLimitedResponse(response: Response): Promise<string> {
   return new TextDecoder().decode(combined);
 }
 
+async function limitedFetch(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> {
+  const response = await fetch(input, init);
+  const body = await readLimitedResponse(response);
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 export function groqConfig(): ProviderConfig | null {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return null;
@@ -105,31 +118,85 @@ async function callProvider(
   tools: ToolSpec[],
   timeoutMs: number,
 ): Promise<ChatResult> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
-      body: JSON.stringify({
-        model: cfg.model,
-        messages,
-        ...(tools.length ? { tools, tool_choice: "auto" } : {}),
-        temperature: 0.2,
-      }),
-      signal: ac.signal,
-    });
-    if (res.status === 429 || res.status >= 500) {
-      throw Object.assign(new Error(`${cfg.name} ${res.status}`), { retryable: true, status: res.status });
+  const provider = createOpenAICompatible({
+    name: cfg.name,
+    baseURL: cfg.baseUrl,
+    apiKey: cfg.apiKey,
+    fetch: limitedFetch,
+  });
+  const sdkTools: ToolSet = Object.fromEntries(tools.map((spec) => [
+    spec.function.name,
+    tool({
+      description: spec.function.description,
+      inputSchema: jsonSchema(spec.function.parameters as Parameters<typeof jsonSchema>[0]),
+    }),
+  ]));
+  const system = messages.filter((message) => message.role === "system").map((message) => message.content ?? "").join("\n\n");
+  const result = await generateText({
+    model: provider(cfg.model),
+    ...(Object.keys(sdkTools).length ? { tools: sdkTools, toolChoice: "auto" as const } : {}),
+    ...(system ? { instructions: system } : {}),
+    messages: toModelMessages(messages.filter((message) => message.role !== "system")),
+    temperature: 0.2,
+    maxRetries: 0,
+    timeout: { totalMs: timeoutMs, stepMs: timeoutMs },
+  });
+  const toolCalls: ToolCall[] = result.toolCalls.map((call) => ({
+    id: call.toolCallId,
+    type: "function",
+    function: { name: call.toolName, arguments: JSON.stringify(call.input) },
+  }));
+  return {
+    message: {
+      role: "assistant",
+      content: result.text || null,
+      ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+    },
+    provider: cfg.name,
+    model: cfg.model,
+    fellBack: false,
+  };
+}
+
+function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
+  return messages.map((message): ModelMessage => {
+    if (message.role === "user") return { role: "user", content: message.content ?? "" };
+    if (message.role === "assistant") {
+      if (!message.tool_calls?.length) return { role: "assistant", content: message.content ?? "" };
+      return {
+        role: "assistant",
+        content: [
+          ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
+          ...message.tool_calls.map((call) => ({
+            type: "tool-call" as const,
+            toolCallId: call.id,
+            toolName: call.function.name,
+            input: parseToolArguments(call.function.arguments),
+          })),
+        ],
+      };
     }
-    const responseText = await readLimitedResponse(res);
-    if (!res.ok) throw new Error(`${cfg.name} ${res.status}: ${responseText.slice(0, 1_000)}`);
-    const body = JSON.parse(responseText) as { choices: { message: ChatResult["message"] }[] };
-    const message = body.choices?.[0]?.message;
-    if (!message) throw new Error(`${cfg.name}: empty completion`);
-    return { message, provider: cfg.name, model: cfg.model, fellBack: false };
-  } finally {
-    clearTimeout(timer);
+    if (message.role === "tool") {
+      return {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: message.tool_call_id ?? "missing-tool-call-id",
+          toolName: message.name ?? "unknown-tool",
+          output: { type: "text", value: message.content ?? "" },
+        }],
+      };
+    }
+    throw new Error("system messages must be supplied through AI SDK instructions");
+  });
+}
+
+function parseToolArguments(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
   }
 }
 

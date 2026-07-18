@@ -38,6 +38,9 @@ if (target === "all" || target === "analyst") {
     ...common,
     entryPoints: ["apps/analyst/src/serverCli.ts"],
     outfile: `${output}/server.mjs`,
+    // AI SDK's optional Vercel OIDC dependency still contains CommonJS requires. Keep the
+    // standalone artifact ESM while giving esbuild's compatibility shim a real Node require.
+    banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
   }));
 }
 await Promise.all(builds);

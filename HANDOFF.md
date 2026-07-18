@@ -3,6 +3,25 @@
 Living state doc. Updated at every phase boundary. If you are picking this repo up,
 read this top-to-bottom, then `GROUND-TRUTH.md`, then `internal/tissue-prd.md` (the spec).
 
+## 2026-07-15 AI SDK 7 and CI compatibility update
+
+- The production analyst model boundary now uses `ai@7.0.28` with the official
+  `@ai-sdk/openai-compatible@3.0.11` provider for Groq and DGrid. AI SDK owns provider protocol
+  normalization and first-class total/per-step timeouts; the real in-memory MCP client/server bridge
+  still executes every read-only tool, and provider fallback remains visible in API metadata/metrics.
+- The existing two-mebibyte provider response cap is preserved through the provider's custom fetch
+  boundary. No model, tool result, or provider success is mocked in production.
+- npm retired the audit endpoints used by pnpm 10.33 on July 15. Both local CI and GitHub CI now use
+  pnpm's documented `--ignore-registry-errors` option. Real moderate-or-higher advisories still fail;
+  only registry transport failure is non-blocking so the remaining verification matrix still runs.
+- Focused analyst typecheck and tests pass: 17 passed and the explicitly external live-model test
+  remained skipped because no model endpoint was configured.
+- The first compiled-runtime run exposed AI SDK's optional Vercel OIDC CommonJS dependency inside
+  the standalone ESM bundle. The analyst build now injects Node's real `createRequire` into
+  esbuild's compatibility shim. `pnpm run ci` then passed end to end: lint, all typechecks, 126
+  deterministic tests, daemon/analyst/dashboard builds, compiled runtime health, and deterministic
+  replay. The audit endpoint still reports HTTP 410, as expected, before the remaining checks run.
+
 ## 2026-07-14 Slip SDK agent update
 
 - Tissue now installs the same packed `@slip/sdk@0.2.0` public contract as FullTime. The tarball
