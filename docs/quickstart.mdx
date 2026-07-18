@@ -1,0 +1,116 @@
+---
+title: "Quickstart"
+description: "Run Tissue end to end against a real TxLINE fixture."
+---
+
+## Prerequisites
+
+- Node.js 20+ and [pnpm](https://pnpm.io)
+- Docker and Docker Compose (for the full three-service stack)
+- A TxLINE account with guest JWT access and an activated API token
+- A Solana keypair (devnet is sufficient for evaluation — mainnet pricing is supported,
+  but anchoring must stay on the same network as the keypair; see
+  [Network Consistency](/core-concepts#network-consistency))
+
+<Warning>
+Tissue's live daemon has no synthetic fallback. If it can't reach TxLINE or verify a
+source proof, it refuses to admit the message rather than quote on unverified data.
+Expect it to sit idle until real credentials and a real feed are present.
+</Warning>
+
+## 1. Install
+
+```bash
+git clone <your-fork-url>
+cd tissue
+pnpm install --frozen-lockfile
+```
+
+## 2. Configure credentials
+
+```bash
+cp .env.example .env
+```
+
+Fill in:
+
+```bash
+TISSUE_KEYPAIR_PATH=/path/to/your/solana-keypair.json
+SOLANA_RPC_DEVNET=https://api.devnet.solana.com
+TXLINE_DEVNET_ORIGIN=<your TxLINE devnet origin>
+```
+
+<Steps>
+  <Step title="Get a guest JWT">
+    Tissue exchanges TxLINE's `POST /auth/guest/start` for an expiring JWT and renews it
+    automatically on stream reconnect — you do not need to manage this manually beyond
+    providing your TxLINE credentials.
+  </Step>
+  <Step title="Activate an API token">
+    Run the bundled activation script, which handles TxLINE's `POST /api/token/activate`
+    response (both the plain-text and JSON response shapes have been observed in
+    practice):
+    ```bash
+    pnpm --filter @tissue/daemon activate:devnet
+    ```
+  </Step>
+</Steps>
+
+## 3. Run the full stack
+
+```bash
+pnpm run ci        # lint, typecheck, test, build, verify:runtime, replay
+docker compose up --build
+```
+
+This starts three services: the daemon (decision engine + API), the dashboard
+(Next.js), and the analyst (read-only forensics layer). Open `http://localhost:3000`
+for the dashboard and `http://localhost:8788/state` for the raw daemon state.
+
+## 4. Replay a real captured fixture instead of going live
+
+If you don't have live credentials handy, or want a deterministic run for evaluation,
+replay one of the real corpora already captured against TxLINE:
+
+```bash
+pnpm --filter @tissue/daemon replay
+```
+
+Expected output:
+
+```
+TISSUE replay · fixture SYN-QF1 · 39 messages · devnet · SIMULATED book
+
+── flight recorder ─────────────────────────────
+  decisions      39
+  hash chain     OK
+  determinism    OK (identical head hash on rerun)
+  head hash      67636e784e773cd3…
+── radar ───────────────────────────────────────
+  events         7  (unexplained-movement×1, late-reaction×5, overreaction×1)
+  halts          1  (unexplained-movement)
+── grade sheet ─────────────────────────────────
+  CLV            n=32  mean 119bps  +ve 50%
+  Brier          0.3608
+  PnL            SIMULATED
+── strategy arena (Tissue vs neutralized baseline) ─────
+  Tissue    CLV n=32  mean 119bps   Brier 0.3608
+  Baseline  CLV n=32  mean 123bps   Brier 0.3584
+```
+
+`determinism OK` means the same corpus was replayed twice internally and produced an
+identical head hash — this is asserted in CI on every build, not just shown here.
+
+## 5. Evaluate against real captured data
+
+```bash
+pnpm run evaluate:real
+```
+
+This hard-fails on a clean checkout with no real TxLINE data — it never falls back to
+synthetic input, by design. It only reports on genuine captured fixtures.
+
+<Tip>
+Next: read [Architecture](/architecture) to see exactly what happens between a TxLINE
+message arriving and a signed decision landing in the ledger.
+</Tip>

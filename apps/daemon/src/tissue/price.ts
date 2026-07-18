@@ -25,6 +25,9 @@ import { type InPlayState, remainingLambdas } from "./inplay.js";
 export interface TissueState extends InPlayState {
   readonly homeScore: number;
   readonly awayScore: number;
+  /** Sustained simultaneous high-pressure window (state/matchState.ts) — a strategy-layer
+   *  spread/size overlay (reservation.ts), not a pricing-lambda input. */
+  readonly mutualDangerActive: boolean;
 }
 
 export interface PricedMarkets {
@@ -75,10 +78,13 @@ export function priceMarkets(
 ): PricedMarkets {
   const rem = remainingLambdas(base, state, {
     regulationMinutes: policy.model.match_regulation_minutes,
+    extraTimeMinutes: policy.model.match_extra_time_minutes,
     redOffendingMult: policy.model.red_card.offending_side_attack_mult,
     redOpponentMult: policy.model.red_card.opponent_side_attack_mult,
     pressureEnabled: policy.model.pressure.enabled,
     pressureMaxAbs: policy.model.pressure.max_abs_adjustment,
+    stoppageMinFraction: policy.model.stoppage.min_fraction,
+    stoppageLambdaMult: policy.model.stoppage.lambda_mult,
   });
 
   const matrix = scoreMatrix(rem.home, rem.away, policy.model.dc_rho, policy.model.max_goals_per_side);

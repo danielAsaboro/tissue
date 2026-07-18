@@ -1,5 +1,6 @@
-import type { RadarClass } from "@tissue/shared";
+import type { NarrativeRegime, RadarClass } from "@tissue/shared";
 import type { Policy } from "../config/policy.js";
+import { staleQuoteSpreadMult } from "./staleQuote.js";
 
 /**
  * Avellaneda–Stoikov-adapted reservation price + spread (Avellaneda & Stoikov, 2008,
@@ -20,6 +21,17 @@ export interface ReservationInputs {
   /** Feed staleness in ms (0 = fresh). */
   readonly stalenessMs: number;
   readonly radarClass: RadarClass | undefined;
+  /** Discretionary added time (tissue/inplay.ts) — elevated variance, unknown clock end. */
+  readonly stoppageActive: boolean;
+  /** Sustained simultaneous both-sides pressure (state/matchState.ts) — bimodal next-goal
+   *  window; widen instead of trusting the Poisson point estimate's confidence. */
+  readonly mutualDangerActive: boolean;
+  /** Rolling market REGIME (radar/narrative.ts) — a persistently nervous market widens
+   *  further on top of any single-event Radar conditioning. */
+  readonly narrativeRegime: NarrativeRegime;
+  /** Age (ms) of the desk's own currently resting quote on this selection (staleQuote.ts,
+   *  max across BACK/LAY) — compresses spread as it ages unchallenged, bounded. */
+  readonly restingQuoteAgeMs: number;
 }
 
 export interface Quote {
@@ -45,7 +57,14 @@ export function reservationQuote(inp: ReservationInputs, policy: Policy): Quote 
   // Half-spread: base + staleness component, then Radar conditioning.
   const staleAdd = (inp.stalenessMs / 1000) * s.stale_spread_bps_per_sec;
   let halfSpread = s.base_spread_bps + staleAdd;
+  if (inp.stoppageActive) halfSpread *= s.stoppage_spread_mult;
+  if (inp.mutualDangerActive) halfSpread *= s.mutual_danger_spread_mult;
+  if (inp.narrativeRegime === "cautious") halfSpread *= s.narrative_conditioning.cautious_spread_mult;
   halfSpread *= radarSpreadMultiplier(inp.radarClass, policy);
+  halfSpread *= staleQuoteSpreadMult(inp.restingQuoteAgeMs, {
+    decayMs: s.stale_quote.decay_ms,
+    minSpreadMult: s.stale_quote.min_spread_mult,
+  });
 
   const half = Math.max(1, Math.round(halfSpread));
   return {

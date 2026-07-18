@@ -19,7 +19,7 @@ interface EvaluationRow {
   readonly hashChainHead: string;
 }
 
-function isRealCorpus(path: string, messages: readonly FeedMessage[]): boolean {
+export function isRealCorpus(path: string, messages: readonly FeedMessage[]): boolean {
   const fixtureId = basename(path, ".jsonl");
   return (
     !fixtureId.startsWith("SYN-") &&
@@ -27,6 +27,16 @@ function isRealCorpus(path: string, messages: readonly FeedMessage[]): boolean {
     messages.length > 0 &&
     messages.every((message) => message.fixtureId === fixtureId && (message.network === "devnet" || message.network === "mainnet"))
   );
+}
+
+/** Every real (non-synthetic) corpus currently checked out in CORPUS_DIR. */
+export function loadRealCorpora(): { readonly fixtureId: string; readonly messages: readonly FeedMessage[] }[] {
+  const paths = readdirSync(CORPUS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.endsWith(".ledger.jsonl"))
+    .map((entry) => join(CORPUS_DIR, entry.name));
+  return paths
+    .map((path) => ({ fixtureId: basename(path, ".jsonl"), messages: readCorpusFile(path) }))
+    .filter(({ fixtureId, messages }) => isRealCorpus(join(CORPUS_DIR, `${fixtureId}.jsonl`), messages));
 }
 
 function noPressure(policy: Policy): Policy {
@@ -73,12 +83,7 @@ export function evaluateCorpus(messages: readonly FeedMessage[], policy: Policy)
 }
 
 function main(): void {
-  const paths = readdirSync(CORPUS_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.endsWith(".ledger.jsonl"))
-    .map((entry) => join(CORPUS_DIR, entry.name));
-  const corpora = paths
-    .map((path) => ({ path, messages: readCorpusFile(path) }))
-    .filter(({ path, messages }) => isRealCorpus(path, messages));
+  const corpora = loadRealCorpora();
   if (corpora.length === 0) {
     throw new Error(
       `No real TxLINE corpora found in ${CORPUS_DIR}. Run the live daemon or live activation capture; synthetic data is never accepted by this evaluator.`,

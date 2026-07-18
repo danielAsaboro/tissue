@@ -1,0 +1,147 @@
+---
+title: "Verifiability & Audit Trail"
+description: "How anyone — including a judge who has never seen this codebase — can independently verify a Tissue decision."
+---
+
+Tissue is built around one rule: every claim about what the desk decided should be
+checkable without trusting the process that made the claim.
+
+## The hash chain
+
+Every decision record is chained to the one before it:
+
+```
+hash = SHA256(prevHash + "|" + canonicalize(record without hash))
+```
+
+`canonicalize` sorts every object key recursively, so the same logical record always
+serializes to the same bytes. `verifyChain(records)` recomputes every link and returns
+the first sequence number where it breaks, if any.
+
+```typescript
+import { verifyChain } from "@tissue/daemon/ledger/ledger";
+
+const result = verifyChain(records);
+// { ok: true } or { ok: false, brokenAtSeq: 47 }
+```
+
+## Ed25519 signatures
+
+The hash chain proves nothing was altered *after the fact*. It does not, by itself,
+prove who produced it. Every record is additionally signed:
+
+```
+signature = Ed25519_sign(hash, operatorSecretKey)
+```
+
+using the same Solana keypair used for on-chain anchoring. Verification needs only the
+public key, embedded in each record as `signerPubkey`:
+
+```typescript
+import { verifyHashSignature } from "@tissue/daemon/ledger/signing";
+
+verifyHashSignature(record.hash, record.signature, record.signerPubkey); // boolean
+```
+
+Ed25519 signatures are deterministic (RFC 8032) — the same key and hash always produce
+the same signature, so this never breaks `replay(corpus) === ledger`.
+
+<Note>
+Records produced in CI/replay with no configured keypair carry no signature — this is
+expected, not an error. `signature` and `signerPubkey` are optional fields.
+</Note>
+
+## Merkle inclusion proofs
+
+At each on-chain checkpoint (see below), Tissue builds a real binary Merkle tree over
+every decision hash from genesis through that checkpoint, and anchors the root. Anyone
+can then request a proof that a specific decision is included in that anchored root:
+
+```bash
+curl "http://<daemon>/ledger/proof?fixtureId=<id>&seq=47"
+```
+
+```json
+{
+  "available": true,
+  "fixtureId": "18209181",
+  "seq": 47,
+  "leafHash": "…",
+  "root": "…",
+  "proof": [{ "hash": "…", "isRightSibling": true }, ...],
+  "checkpoint": { "seq": 60, "txSig": "…", "submittedAt": 1732000000000 }
+}
+```
+
+Verifying it takes only the leaf hash, the proof path, and the root — no trust in the
+daemon that served the response:
+
+```typescript
+import { verifyMerkleProof } from "@tissue/daemon/ledger/merkle";
+
+verifyMerkleProof(leafHash, proof, root); // boolean
+```
+
+## On-chain anchoring
+
+Two real, distinct anchoring mechanisms exist, both using Solana's standard SPL Memo
+program (TxLINE's own oracle program has no generic commitment instruction, so Memo is
+the correct tool — not a workaround):
+
+- **Pre-Match Commitment ("Proof of Edge").** Before any in-play score message is
+  folded into match state, Tissue's opening priced markets are hashed and anchored in a
+  real, confirmed transaction — proving the model was committed *before* kickoff, not
+  fit retroactively.
+- **Periodic checkpoint anchoring.** At a configurable decision interval
+  (`policy.exec.checkpoint_interval_decisions`), the current Merkle root over every
+  decision so far is anchored again — continuous on-chain evidence through the match,
+  not just a single pre-kickoff snapshot.
+
+Both mechanisms return real transaction signatures and slot numbers, surfaced on the
+dashboard's commitment timeline and via `/state`.
+
+## Signed policy snapshots
+
+`policy.toml` is the single source of truth for every tunable constant in the pricing
+and risk logic — no magic numbers live in code. At boot, Tissue hashes the canonical
+policy object and signs it with the same operator keypair, appending a new entry to a
+durable log **only when the policy actually changed** since the last recorded boot:
+
+```bash
+curl http://<daemon>/policy/snapshots
+```
+
+This makes "what policy was live when this decision was made" independently checkable,
+rather than an assumption backed only by git history.
+
+## Source proof verification
+
+Every score and odds message is checked against TxLINE's own Merkle proof endpoints and
+validated on-chain (`validate_odds` / `validate_stat`) before it can enter the decision
+pipeline. This is fail-closed: a message that fails verification is never admitted, not
+quoted around and flagged after the fact.
+
+This tamper-detection logic is directly tested, not just assumed correct: a dedicated
+suite constructs matching stream-message/proof pairs and then tampers each field one at
+a time (message ID, fixture, market, prices, in-running state, batch window) to confirm
+every mismatch is actually rejected. A separate adversarial suite feeds the ingest
+pipeline deliberately corrupted raw payloads — non-numeric timestamps, out-of-range
+scores, non-numeric odds prices — and asserts they're rejected or safely clamped rather
+than silently corrupting downstream pricing.
+
+## Full replay
+
+`replay(corpus) === ledger` is asserted in CI on every build. Given the exact same
+ordered feed, Tissue always produces the exact same hash chain — no wall-clock
+dependence, no non-determinism.
+
+```bash
+pnpm --filter @tissue/daemon replay
+```
+
+<Tip>
+For a judge with no prior context: start at `/verify` on a running daemon (hash-chain
+status), then pull one recent decision's `seq`, request `/ledger/proof` for it, and
+verify the proof locally against the anchored root's real Solana transaction signature.
+That's the full trust chain in three requests.
+</Tip>

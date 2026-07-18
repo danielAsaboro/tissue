@@ -1,6 +1,17 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import type { LiveConfig } from "../runtime/config.js";
 import type { LiveDesk } from "../runtime/liveDesk.js";
+import { CORPUS_DIR, readCorpus } from "../ingest/corpus.js";
+import { loadPolicy } from "../config/policy.js";
+import { loadAllPolicySnapshots } from "../config/policySnapshot.js";
+import { runArena, summarizeArena } from "../arena/arena.js";
+import { runAblationMatrix } from "../arena/ablation.js";
+import { renderGradeCardSvg } from "../grader/gradeCard.js";
+import { grade } from "../grader/grader.js";
+import { runEngine } from "../replay/engine.js";
+import { buildMerkleTree, merkleProof } from "../ledger/merkle.js";
+import { PROGRAM_ID } from "../exec/anchor.js";
 
 const MAX_SSE_CLIENTS = 100;
 const MAX_SSE_BUFFER_BYTES = 1_048_576;
@@ -23,6 +34,16 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     ...securityHeaders(),
   });
   res.end(encoded);
+}
+
+function svg(res: ServerResponse, body: string): void {
+  res.writeHead(200, {
+    "content-type": "image/svg+xml; charset=utf-8",
+    "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store",
+    ...securityHeaders(),
+  });
+  res.end(body);
 }
 
 function metrics(res: ServerResponse, body: string): void {
@@ -78,6 +99,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
         network: snapshot.network,
         lastFeedAt: snapshot.lastFeedAt,
         streams: snapshot.streams,
+        wallet: snapshot.wallet,
         error: snapshot.error,
       });
       return;
@@ -101,6 +123,57 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       json(res, 200, snapshot);
       return;
     }
+    if (url.pathname === "/record") {
+      json(res, 200, {
+        schema: "tissue.record.v1",
+        generatedAt: new Date().toISOString(),
+        network: snapshot.network,
+        oracleProgramId: PROGRAM_ID[snapshot.network].toBase58(),
+        memoProgramId: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+        howToVerify:
+          "For any decision: strip hash/signature/signerPubkey from the record, canonicalize " +
+          "the rest (recursively sort object keys, JSON.stringify), then " +
+          "sha256(prevHash + '|' + canonicalJson) must equal hash. Chain it: record[i].prevHash " +
+          "must equal record[i-1].hash for every i. See /ledger/proof for a Merkle inclusion " +
+          "proof of one decision against a specific anchored checkpoint root, verifiable with " +
+          "only the leaf hash, the proof path, and the root — no trust in this server required. " +
+          "If signature/signerPubkey are present, Ed25519-verify signature against hash using " +
+          "signerPubkey. preMatchCommitment.txSig and each checkpoints[].txSig are real Solana " +
+          "transactions carrying an SPL Memo with the committed hash/root — fetch them from any " +
+          "public RPC or explorer, independent of this server, to confirm the commitment " +
+          "predates the claims it anchors.",
+        portfolio: snapshot.portfolio,
+        fixtures: snapshot.fixtures.map((fixture) => ({
+          fixtureId: fixture.fixtureId,
+          headHash: fixture.headHash,
+          hashChainOk: fixture.hashChainOk,
+          finalScore: fixture.finalScore,
+          grade: fixture.grade,
+          preMatchCommitment: fixture.preMatchCommitment,
+          checkpoints: fixture.checkpoints,
+          decisions: fixture.decisions.map((d) => ({
+            seq: d.seq,
+            triggerMsgId: d.triggerMsgId,
+            triggerHash: d.triggerHash,
+            triggerNetwork: d.triggerNetwork,
+            ts: d.ts,
+            action: d.action,
+            ...(d.radarClass ? { radarClass: d.radarClass } : {}),
+            ...(d.haltReason ? { haltReason: d.haltReason } : {}),
+            policyHash: d.policyHash,
+            tissueProb: d.tissueProb,
+            marketProb: d.marketProb,
+            edgeBps: d.edgeBps,
+            simulated: d.simulated,
+            prevHash: d.prevHash,
+            hash: d.hash,
+            ...(d.signature ? { signature: d.signature } : {}),
+            ...(d.signerPubkey ? { signerPubkey: d.signerPubkey } : {}),
+          })),
+        })),
+      });
+      return;
+    }
     if (url.pathname === "/verify") {
       json(res, 200, {
         ok: snapshot.fixtures.every((fixture) => fixture.hashChainOk),
@@ -110,6 +183,124 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
           headHash: fixture.headHash,
         })),
       });
+      return;
+    }
+    if (url.pathname === "/arena") {
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      if (!fixtureId) {
+        json(res, 200, { available: false, reason: "no active fixture yet" });
+        return;
+      }
+      let corpus;
+      try {
+        corpus = readCorpus(fixtureId);
+      } catch {
+        json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
+        return;
+      }
+      if (corpus.length === 0) {
+        json(res, 200, { available: false, reason: `fixture ${fixtureId} has no messages yet` });
+        return;
+      }
+      // On-demand — the SAME deterministic engine run over the SAME authoritative corpus the
+      // live desk already captured; not a second continuously-running live session.
+      const arena = runArena(corpus, loadPolicy(), snapshot.network);
+      json(res, 200, { available: true, ...summarizeArena(arena) });
+      return;
+    }
+    if (url.pathname === "/arena/ablation") {
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      if (!fixtureId) {
+        json(res, 200, { available: false, reason: "no active fixture yet" });
+        return;
+      }
+      let corpus;
+      try {
+        corpus = readCorpus(fixtureId);
+      } catch {
+        json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
+        return;
+      }
+      if (corpus.length === 0) {
+        json(res, 200, { available: false, reason: `fixture ${fixtureId} has no messages yet` });
+        return;
+      }
+      // Same on-demand, authoritative-corpus discipline as /arena — each regime graded
+      // against the SAME neutralized baseline, isolating which flagged heuristic earns its
+      // keep instead of only reporting the bundled effect.
+      const matrix = runAblationMatrix(corpus, loadPolicy(), snapshot.network);
+      json(res, 200, { available: true, ...matrix });
+      return;
+    }
+    if (url.pathname === "/grade-card.svg") {
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      if (!fixtureId) {
+        json(res, 200, { available: false, reason: "no active fixture yet" });
+        return;
+      }
+      let corpus;
+      try {
+        corpus = readCorpus(fixtureId);
+      } catch {
+        json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
+        return;
+      }
+      if (corpus.length === 0) {
+        json(res, 200, { available: false, reason: `fixture ${fixtureId} has no messages yet` });
+        return;
+      }
+      const result = runEngine(corpus, loadPolicy(), snapshot.network);
+      const sheet = grade(result, loadPolicy());
+      svg(res, renderGradeCardSvg({
+        fixtureId,
+        network: snapshot.network,
+        sheet,
+        haltCount: result.halts.length,
+        finalScore: result.finalScore,
+        generatedAt: new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC",
+      }));
+      return;
+    }
+    if (url.pathname === "/ledger/proof") {
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      const seqParam = url.searchParams.get("seq");
+      const seq = seqParam === null ? NaN : Number(seqParam);
+      if (!fixtureId) {
+        json(res, 404, { available: false, reason: "no active fixture yet" });
+        return;
+      }
+      if (!Number.isInteger(seq) || seq < 0) {
+        json(res, 400, { available: false, reason: "seq must be a non-negative integer" });
+        return;
+      }
+      const recordHashes = desk.getLedgerRecordHashes(fixtureId);
+      if (!recordHashes || seq >= recordHashes.length) {
+        json(res, 404, { available: false, reason: `no decision ${seq} for fixture ${fixtureId}` });
+        return;
+      }
+      // The earliest checkpoint whose Merkle tree already includes this decision — an
+      // inclusion proof can only be produced against a root that was actually anchored.
+      const checkpoint = desk.getCheckpoints(fixtureId)
+        .filter((c) => c.status === "confirmed" && c.seq >= seq)
+        .sort((a, b) => a.seq - b.seq)[0];
+      if (!checkpoint) {
+        json(res, 404, { available: false, reason: `no confirmed checkpoint covers decision ${seq} yet` });
+        return;
+      }
+      const tree = buildMerkleTree(recordHashes.slice(0, checkpoint.seq + 1));
+      json(res, 200, {
+        available: true,
+        fixtureId,
+        seq,
+        leafHash: recordHashes[seq],
+        root: tree.root,
+        proof: merkleProof(tree, seq),
+        checkpoint: { seq: checkpoint.seq, txSig: checkpoint.txSig, submittedAt: checkpoint.submittedAt },
+      });
+      return;
+    }
+    if (url.pathname === "/policy/snapshots") {
+      json(res, 200, { snapshots: loadAllPolicySnapshots(join(CORPUS_DIR, "policy-snapshots.jsonl")) });
       return;
     }
     if (url.pathname === "/metrics") {
@@ -133,6 +324,13 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
         "# HELP tissue_sse_clients Current evidence SSE clients.",
         "# TYPE tissue_sse_clients gauge",
         `tissue_sse_clients ${sseClients.size}`,
+        "# HELP tissue_wallet_balance_lamports Real SOL balance of the anchoring keypair (-1 if unknown).",
+        "# TYPE tissue_wallet_balance_lamports gauge",
+        `tissue_wallet_balance_lamports ${snapshot.wallet.lamports ?? -1}`,
+        "# HELP tissue_wallet_balance_low 1 if the anchoring keypair balance is below the configured warning threshold.",
+        "# TYPE tissue_wallet_balance_low gauge",
+        `tissue_wallet_balance_low ${snapshot.wallet.low ? 1 : 0}`,
+        desk.latencyMetricsPrometheus(),
         "",
       ].join("\n"));
       return;
@@ -157,7 +355,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
     }
     json(res, 404, {
       error: "not_found",
-      available: ["/health", "/ready", "/state", "/verify", "/metrics", "/events"],
+      available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
     });
   });
   server.requestTimeout = 15_000;

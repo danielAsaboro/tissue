@@ -1,0 +1,146 @@
+---
+title: "Deployment & Production"
+description: "Running Tissue in production: configuration, observability, and safety practices."
+---
+
+## Docker
+
+Three services, orchestrated with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+| Service | Purpose |
+|---|---|
+| `daemon` | Decision engine, risk gates, ledger, anchoring, HTTP/SSE API |
+| `dashboard` | Next.js UI, reads only the daemon's evidence API |
+| `analyst` | Read-only forensics layer, isolated SQLite + MCP tools |
+
+All three have health checks and a defined restart policy, and share persistent
+evidence storage (the corpus directory holding captured feed data, the ledger, anchor
+evidence, and policy snapshots).
+
+## Environment variables
+
+```bash
+TISSUE_MODE=live                     # required — no synthetic fallback exists
+TISSUE_NETWORK=devnet                # or mainnet
+TISSUE_KEYPAIR_PATH=/path/to/key.json
+SOLANA_RPC_DEVNET=...
+SOLANA_RPC_MAINNET=...
+TXLINE_DEVNET_ORIGIN=...
+TXLINE_MAINNET_ORIGIN=...
+TISSUE_DAEMON_URL=http://127.0.0.1:8788   # used by the dashboard
+```
+
+<Warning>
+`TISSUE_MODE=live` is required. There is no `TISSUE_MODE=synthetic` — the daemon fails
+loudly at startup rather than silently substituting fabricated data.
+</Warning>
+
+## Monitoring & observability
+
+- **Metrics** — `GET /metrics` in Prometheus exposition format: stream failures,
+  source-proof failures/pending/verified, SSE client count, and two real latency
+  histograms (`tissue_proof_verification_latency_ms`,
+  `tissue_decision_loop_latency_ms`)
+- **Health** — `GET /health` (liveness) and `GET /ready` (readiness — requires at least
+  one verified proof and zero recent failures)
+- **Logs** — structured JSON events (`tissue.source_proof_failed`,
+  `tissue.proof_circuit_halt`, `tissue.checkpoint_anchor_failed`, etc.), bounded and
+  rotated in the container runtime
+
+## Security & safety practices
+
+- Source proofs are fail-closed: a message that can't be verified is never admitted,
+  never quoted around
+- Drawdown kill and the proof-failure-rate circuit breaker are operator-restart-only —
+  neither latch auto-resumes
+- Persisted local receipts are never treated as source authority; recovery always
+  reverifies against the live TxLINE proof endpoints
+- No transaction-signing tool exists anywhere in the analyst layer
+- Manual private release artifacts include BuildKit provenance, SBOM attestations, and
+  SHA-256 checksums; the release workflow is read-only and cannot itself publish or
+  deploy
+
+## Testing & verification
+
+`pnpm run ci` (dependency audit, lint, typecheck, the full default test suite, build,
+compiled-runtime verification, and a determinism-checked replay) runs on every build and
+covers 322 tests across the daemon, dashboard, and analyst — including adversarial and
+malformed-input suites that run by default, not as an opt-in extra:
+
+- **Malformed/adversarial TxLINE input** (`apps/daemon/src/ingest/ingest.test.ts`,
+  `apps/daemon/src/exec/exec.test.ts`) — deliberately corrupted feed payloads (non-numeric
+  timestamps, negative/huge scores, NaN-producing odds prices, tampered proof responses)
+  asserting the ingest pipeline fails closed rather than silently accepting garbage.
+- **Adversarial analyst input** (`apps/analyst/src/adversarial.test.ts`) — prompt
+  injection, spoofed tool names, malformed MCP arguments, and "terrible user prompts"
+  driven through the real MCP client/server pair and the real agent loop, asserting no
+  path can ever reach a write/execute action (none exists) regardless of what a
+  compromised model attempts.
+
+Three further suites are opt-in — they need external infrastructure this project doesn't
+assume is always running, so they're excluded from default CI but real and runnable:
+
+<Steps>
+  <Step title="Local Solana anchoring tests (Surfpool)">
+    ```bash
+    curl -sL https://run.surfpool.run/ | bash   # one-time install
+    surfpool start                               # local validator, separate terminal
+    pnpm --filter @tissue/daemon test:surfpool
+    ```
+    Real transaction-level tests — successful confirmation, insufficient-balance failure,
+    unreachable-RPC failure, concurrent same-keypair submissions, and independent
+    on-chain verification of a confirmed signature — against a real local Solana
+    validator instead of racing public devnet's rate limits.
+  </Step>
+  <Step title="Dashboard E2E (Playwright)">
+    ```bash
+    pnpm --filter @tissue/dashboard exec playwright install chromium   # one-time
+    pnpm --filter @tissue/dashboard test:e2e
+    ```
+    Real Chromium against a real Next.js server, driving every page under every desk
+    status (starting, verifying, quoting, watching, halted, error) via a fake daemon
+    HTTP process that speaks the exact API shape the real daemon does.
+  </Step>
+  <Step title="Real process-level chaos drills">
+    ```bash
+    node scripts/build-runtime.mjs daemon
+    TXLINE_JWT=… TXLINE_API_TOKEN=… pnpm --filter @tissue/daemon drill:restart <corpus> <fixtureId>
+    TXLINE_JWT=… TXLINE_API_TOKEN=… pnpm --filter @tissue/daemon drill:streamdrop <corpus> <fixtureId>
+    ```
+    Spawn the compiled daemon as a real OS process against real (proxied) TxLINE/Solana
+    endpoints. `drill:restart` SIGKILLs it mid-stream and asserts the persisted hash
+    chain survives a hard crash. `drill:streamdrop` severs the SSE connections without
+    killing the process and asserts the daemon detects the drop and reconnects — a
+    distinct fault class, requiring only real credentials, not a message that manages to
+    pass TxLINE's live proof verification.
+  </Step>
+</Steps>
+
+<Note>
+Real, honest limitation: replaying an old captured corpus against TxLINE's real proof
+endpoints during a restart drill doesn't reliably produce successful admissions —
+TxLINE's proof service isn't guaranteed to serve proofs for historical/replayed
+messages. This blocks a live SIGKILL-during-anchor-submission scenario specifically,
+which is why `drill:streamdrop` exists as an independently valid fault class that
+doesn't depend on any message passing proof verification. See [Feedback &
+Roadmap](/feedback-roadmap) for the full finding.
+</Note>
+
+## Scaling notes
+
+Tissue's default scope is one-fixture-focus, matching the PRD's design intent, but the
+World Cup schedule stages multiple knockout ties concurrently. Portfolio-level exposure
+and drawdown caps (see [Core Concepts](/core-concepts#the-discipline-engine)) exist
+specifically so a loss on one concurrently running fixture halts every fixture the desk
+is running, not only the one that tripped it.
+
+<Tip>
+For judge evaluation, `pnpm run ci` alone (see [Testing &
+verification](#testing-verification) above) is the fastest way to confirm the core
+claims — the opt-in suites are there for deeper verification, not required for a first
+pass.
+</Tip>

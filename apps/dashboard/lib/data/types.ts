@@ -39,6 +39,12 @@ export interface QuoteTapeRow {
   readonly status: string;
   /** True only for explicit replay data. Live quote publication is always false. */
   readonly simulated: boolean;
+  /** "Receipts over promises": the hash-chained decision record this quote came from, the
+   *  exact TxLINE proof messageId it was verified against, and a real explorer link when an
+   *  on-chain anchoring tx exists for that proof. */
+  readonly decisionHash?: string;
+  readonly proofMessageId: string;
+  readonly explorerUrl?: string;
 }
 
 export interface HaltState {
@@ -71,6 +77,71 @@ export interface AnchorEvidenceRow {
   readonly error?: string;
 }
 
+/**
+ * On-chain commitment timeline: the pre-kickoff "Proof of Edge" snapshot plus every periodic
+ * checkpoint of the ledger head hash anchored through the match (exec/preMatchCommit.ts,
+ * exec/periodicAnchor.ts) — real SPL Memo transactions, not per-message validate_odds proof
+ * (that's AnchorEvidenceRow above).
+ */
+export interface CommitmentTimelineRow {
+  readonly kind: "pre-match" | "checkpoint";
+  readonly seq?: number;
+  readonly submittedAt: number;
+  readonly status: "confirmed" | "failed";
+  readonly hash: string;
+  readonly txSig?: string;
+  readonly error?: string;
+}
+
+/**
+ * Strategy Arena: the SAME feed through the SAME deterministic engine with every flagged
+ * heuristic/regime neutralized (baselinePolicy) vs the full desk — a real head-to-head
+ * computed on demand from the fixture's authoritative corpus, not a second continuously
+ * running live session.
+ */
+export interface ArenaSummary {
+  readonly available: boolean;
+  readonly reason?: string;
+  readonly fixtureId?: string;
+  readonly tissue?: { readonly meanClvBps: number; readonly clvN: number; readonly brier: number };
+  readonly baseline?: { readonly meanClvBps: number; readonly clvN: number; readonly brier: number };
+  readonly clvEdgeBps?: number;
+  readonly brierEdge?: number;
+}
+
+/**
+ * N-way regime ablation: each flagged heuristic isolated one at a time against the SAME
+ * neutralized baseline (arena/ablation.ts) — which regime earns its keep, not just the
+ * bundled effect runArena reports.
+ */
+export interface AblationRow {
+  readonly regime: string;
+  readonly meanClvBps: number;
+  readonly clvN: number;
+  readonly brier: number;
+  readonly clvEdgeBps: number;
+  readonly brierEdge: number;
+}
+
+export interface AblationMatrixSummary {
+  readonly available: boolean;
+  readonly reason?: string;
+  readonly fixtureId?: string;
+  readonly baseline?: { readonly meanClvBps: number; readonly clvN: number; readonly brier: number };
+  readonly rows?: readonly AblationRow[];
+}
+
+/** One point per decision, from the already-tracked ExposureSnapshot embedded in every
+ *  DecisionRecord — no new backend calculation, just plotted instead of left in raw JSON. */
+export interface EquityCurvePoint {
+  readonly seq: number;
+  readonly tsMs: number;
+  readonly minute: number;
+  readonly realizedPnlUnits: number;
+  readonly peakEquityUnits: number;
+  readonly drawdownUnits: number;
+}
+
 /** Everything the dashboard needs, behind one swappable seam. */
 export interface DashboardData {
   readonly network: Network;
@@ -86,4 +157,12 @@ export interface DashboardData {
   getGradeSheet(): Promise<GradeSheet | null>;
   getReplayControl(): Promise<ReplayControl>;
   getAnchorEvidence(): Promise<readonly AnchorEvidenceRow[]>;
+  getArenaSummary(): Promise<ArenaSummary>;
+  getAblationMatrix(): Promise<AblationMatrixSummary>;
+  getCommitmentTimeline(): Promise<readonly CommitmentTimelineRow[]>;
+  getEquityCurve(): Promise<readonly EquityCurvePoint[]>;
+  /** The fixture the dashboard's other data methods implicitly resolve to — needed by the
+   *  in-browser verifier (VerifyPanel), which must know which fixture a decision seq
+   *  belongs to before it can look it up in the public /record export. */
+  getActiveFixtureId(): Promise<string | null>;
 }

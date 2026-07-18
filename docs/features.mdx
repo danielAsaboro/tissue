@@ -1,0 +1,81 @@
+---
+title: "Features"
+description: "Everything Tissue does, grouped by concern."
+---
+
+## Pricing & strategy
+
+- Poisson + Dixon-Coles fair-value model, fixed-point bps math throughout
+- Five individually toggleable regimes (stoppage-time, mutual-danger, narrative,
+  informed-flow, stale-quote decay) — see [Core Concepts](/core-concepts)
+- Avellaneda-Stoikov-adapted inventory skew (reservation price shifts against net
+  inventory)
+- Kelly-fraction position sizing with configured min/max stake bounds
+- Quote-odds sanity bounds — no markets made on near-certainties or deep longshots
+
+## Verifiability
+
+- Hash-chained decision ledger with CI-enforced `replay(corpus) === ledger`
+- Ed25519 signing of every decision record
+- Real Merkle tree + inclusion proofs (`/ledger/proof`)
+- Real Solana on-chain anchoring: pre-match commitment + periodic checkpoints
+- Signed policy config snapshots, appended only on real change
+- Source-proof verification (Merkle proof + on-chain `validate_odds`/`validate_stat`)
+  required before any message is admitted
+
+## Risk & discipline
+
+- Feed-gap halt, unexplained-movement halt, informed-flow halt, model-divergence band
+- Per-fixture and portfolio-level exposure caps and drawdown kill (operator-restart-only)
+- Aggregate proof-failure-rate circuit breaker, distinct from per-message rejection
+- Network-consistency enforcement between pricing input and anchoring keypair
+
+## Evaluation
+
+- Strategy Arena: Tissue vs neutralized Baseline, same feed, same engine, same grader
+- N-way regime ablation matrix: each regime isolated individually against baseline
+- Deterministic sha256-bucketed calibration/holdout split, honest about being
+  underpowered on small real samples
+- Human-reviewed tuning suggestions (`evaluate:tuning`), calibration-only, never
+  auto-applied
+- `evaluate:real` — hard-fails on a clean checkout with no real TxLINE data, never
+  falls back to synthetic
+
+## Production operation
+
+- Dual independent TxLINE SSE streams with reconnect, `Last-Event-ID`, JWT renewal
+- Deterministic crash recovery: persisted ledger prefix reverified against a fresh
+  corpus replay on restart, never trusting a cached receipt as source authority
+- Prometheus-format metrics: proof/stream/SSE counters plus real latency histograms for
+  proof-verification time and end-to-end decision-loop time
+- Liveness/readiness endpoints (`/health`, `/ready`)
+- Read-only SSE evidence stream (`/events`) for external observers
+- Three-service Docker Compose (daemon, dashboard, analyst) with health checks and
+  shared persistent evidence storage
+- Pruned, production-only compiled runtimes; CI exercises compiled entry points, not
+  `tsx`
+
+## Dashboard
+
+- Live decision feed with regime badges (extra-time/penalties, stoppage, mutual-danger,
+  narrative regime) shown only when non-default
+- Halt banner with distinct, reason-specific explanations per halt type
+- On-chain commitment timeline (pre-match + periodic checkpoints, real explorer links)
+- TxLINE input verification list (per-message proof evidence)
+- Strategy Arena view + regime ablation matrix table
+- Equity curve (realized PnL / drawdown per decision, from already-tracked exposure
+  state)
+- Shareable, on-demand grade card (SVG export)
+- Loading, empty, error/retry, halt, and hash-verification states throughout
+
+## Analyst layer (read-only)
+
+- Isolated SQLite projection, `readOnly: true` at the connection level — no write tool
+  exists
+- 8 read-only MCP tools across 3 explicit skills: ledger forensics, Slip market
+  intelligence, Slip settlement audit (see [Reference](/reference))
+- Structured pattern recall (`find_similar_decisions`) — explicitly not a fabricated
+  embeddings claim; every result is a real, citable ledger row matched on radar class,
+  match minute, and edge magnitude
+- Live-model integration test proves the full model → MCP → Slip SDK → canonical
+  market path without monkey-patching a response

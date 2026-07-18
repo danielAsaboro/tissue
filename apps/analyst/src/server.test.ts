@@ -61,6 +61,67 @@ describe("analyst HTTP boundary", () => {
     await expect(response.json()).resolves.toEqual({ error: "question exceeds 1000 characters" });
   });
 
+  it("rejects malformed JSON syntax cleanly, without crashing the server", async () => {
+    const origin = await bind();
+    const response = await fetch(`${origin}/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not valid json at all",
+    });
+    expect(response.status).toBe(500);
+    // The server must still be alive and answering after a syntax-malformed body.
+    const health = await fetch(`${origin}/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it("rejects a missing question field", async () => {
+    const origin = await bind();
+    const response = await fetch(`${origin}/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "missing 'question'" });
+  });
+
+  it("rejects an empty or whitespace-only question", async () => {
+    const origin = await bind();
+    for (const question of ["", "   ", "\n\t"]) {
+      const response = await fetch(`${origin}/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("rejects non-string question types (number, array, object, null, boolean)", async () => {
+    const origin = await bind();
+    for (const question of [42, ["hi"], { text: "hi" }, null, true]) {
+      const response = await fetch(`${origin}/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ error: "missing 'question'" });
+    }
+  });
+
+  it("ignores unexpected extra fields in the request body rather than erroring on them", async () => {
+    const origin = await bind();
+    const response = await fetch(`${origin}/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: "summarize", admin: true, __proto__: { polluted: true } }),
+    });
+    // Reaches the real handler (500, since no LLM provider is configured in this test env)
+    // rather than being rejected at parsing for the extra fields.
+    expect(response.status).toBe(500);
+  });
+
   it("does not expose internal failure details", async () => {
     const origin = await bind();
     const response = await fetch(`${origin}/chat`, {

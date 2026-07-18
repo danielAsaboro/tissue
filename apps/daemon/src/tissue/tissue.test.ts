@@ -3,7 +3,7 @@ import { loadPolicy, type Policy } from "../config/policy.js";
 import { poissonPmf, scoreMatrix, dcTau } from "./poisson.js";
 import { outcome1x2, outcomeTotals } from "./outcomes.js";
 import { solveBaseLambdas } from "./solve.js";
-import { remainingTimeFraction } from "./inplay.js";
+import { remainingTimeFraction, phaseTotalMinutes } from "./inplay.js";
 import type { TissueState } from "./price.js";
 import { TissuePricer, solveConfigFromPolicy } from "./index.js";
 import { readCorpus } from "../ingest/corpus.js";
@@ -17,7 +17,13 @@ beforeAll(() => {
   writeCorpus(SYNTHETIC_FIXTURE_ID, generateSyntheticCorpus());
 });
 
-const NEUTRAL = { homePressure: 0, awayPressure: 0 } as const;
+const NEUTRAL = {
+  homePressure: 0,
+  awayPressure: 0,
+  matchPhase: "regulation",
+  stoppageActive: false,
+  mutualDangerActive: false,
+} as const;
 function state(o: Partial<TissueState>): TissueState {
   return { minute: 0, homeScore: 0, awayScore: 0, homeReds: 0, awayReds: 0, ...NEUTRAL, ...o };
 }
@@ -96,10 +102,44 @@ describe("solve round-trip", () => {
 });
 
 describe("in-play adjustments", () => {
-  it("remaining-time fraction is 1 at KO, 0 at/after FT", () => {
-    expect(remainingTimeFraction(0, 90)).toBe(1);
-    expect(remainingTimeFraction(45, 90)).toBeCloseTo(0.5, 9);
-    expect(remainingTimeFraction(95, 90)).toBe(0);
+  it("remaining-time fraction is 1 at KO, 0 at/after FT (no stoppage)", () => {
+    expect(remainingTimeFraction(0, 90, false, 0.03)).toBe(1);
+    expect(remainingTimeFraction(45, 90, false, 0.03)).toBeCloseTo(0.5, 9);
+    expect(remainingTimeFraction(95, 90, false, 0.03)).toBe(0);
+  });
+
+  it("stoppage time floors remaining fraction instead of hard-zeroing", () => {
+    expect(remainingTimeFraction(93, 90, true, 0.03)).toBeCloseTo(0.03, 9);
+    expect(remainingTimeFraction(90, 90, true, 0.03)).toBeCloseTo(0.03, 9);
+  });
+
+  it("phaseTotalMinutes expands to regulation+ET once extra time has started", () => {
+    expect(phaseTotalMinutes("regulation", 90, 30)).toBe(90);
+    expect(phaseTotalMinutes("extraTime", 90, 30)).toBe(120);
+    expect(phaseTotalMinutes("penalties", 90, 30)).toBe(120);
+  });
+
+  it("extra time still prices real remaining goal-scoring time (does not zero at minute 90)", () => {
+    const pricer = new TissuePricer({ home: 0.5, draw: 0.28, away: 0.22, totals: { line: 2.5, over: 0.52 } }, policy);
+    const et = pricer.price(state({ minute: 95, matchPhase: "extraTime" }));
+    expect(et.lambdas.homeMilli).toBeGreaterThan(0);
+    expect(et.lambdas.awayMilli).toBeGreaterThan(0);
+  });
+
+  it("penalties freeze the goal-scoring window (no more time-priced goals)", () => {
+    const pricer = new TissuePricer({ home: 0.5, draw: 0.28, away: 0.22, totals: { line: 2.5, over: 0.52 } }, policy);
+    const pe = pricer.price(state({ minute: 120, matchPhase: "penalties" }));
+    expect(pe.lambdas.homeMilli).toBe(0);
+    expect(pe.lambdas.awayMilli).toBe(0);
+  });
+
+  it("stoppage time in regulation applies the bounded lambda boost, still capped", () => {
+    const pricer = new TissuePricer({ home: 0.5, draw: 0.28, away: 0.22, totals: { line: 2.5, over: 0.52 } }, policy);
+    const normal = pricer.price(state({ minute: 89 }));
+    const stoppage = pricer.price(state({ minute: 91, stoppageActive: true }));
+    // Stoppage keeps quoting real time rather than collapsing to zero remaining lambda.
+    expect(stoppage.lambdas.homeMilli).toBeGreaterThan(0);
+    expect(normal.lambdas.homeMilli).toBeGreaterThan(0);
   });
 
   it("a lead late in the match drives the leader's win prob toward certainty", () => {

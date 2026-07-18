@@ -71,14 +71,23 @@ curl http://127.0.0.1:8788/health
 curl http://127.0.0.1:8788/ready
 curl http://127.0.0.1:8788/verify
 curl http://127.0.0.1:8788/state
+curl http://127.0.0.1:8788/record
+curl http://127.0.0.1:8788/arena
+curl http://127.0.0.1:8788/arena/ablation
 curl http://127.0.0.1:8788/metrics
 ```
 
-- `/health` proves the process is alive even while waiting for a match.
+- `/health` proves the process is alive even while waiting for a match, and reports the
+  anchoring wallet's current balance and low-balance flag.
 - `/ready` is `503` until real feed data has arrived, at least one source proof has passed,
   and all hard gates are clear.
 - `/state` is the dashboard source of truth; it carries no credentials or private keys.
-- `/verify` recomputes every persisted decision link.
+- `/record` is the public export judges or third parties can fetch directly, independent of
+  the dashboard, to reproduce every hash/signature/Merkle/anchoring check by hand.
+- `/verify` recomputes every persisted decision link. The dashboard's `/verify` page runs the
+  equivalent chain client-side, ending in a fetch to a public Solana RPC from the browser.
+- `/arena` and `/arena/ablation` replay the fixture with regimes neutralized (in aggregate
+  and individually) for a real CLV/Brier comparison against the live desk.
 - The analyst `/health` endpoint on port `8787` reports `ready: true` only when an LLM
   provider and at least one real live export are available. It ignores `SYN-*` fixtures and
   reports the installed skills, tool names, and whether a complete Slip boundary is configured.
@@ -146,6 +155,20 @@ pnpm run evaluate:real
 The evaluator rejects `SYN-*` and ledger files. It reports per-fixture and aggregate CLV,
 Brier score, market baseline where 1X2 exists, pressure-ablation CLV, message/quote counts,
 and the decision-chain head. No result is produced if no real corpus is available.
+
+## Resilience drills
+
+Process-level drills that prove reconnect/recovery behavior without needing a live match or
+on-chain proof to succeed:
+
+```bash
+pnpm --filter @tissue/daemon drill:restart      # kill -9 the daemon mid-session, confirm recovery
+pnpm --filter @tissue/daemon drill:streamdrop    # force-sever the SSE connection, confirm reconnect
+```
+
+`apps/dashboard` also has a real Playwright E2E suite against a fake-daemon fixture
+(`pnpm --filter @tissue/dashboard test:e2e`), and Surfpool-backed transaction-level anchoring
+tests are opt-in via `SURFPOOL_RPC_URL` (`pnpm --filter @tissue/daemon test:surfpool`).
 
 ## Teardown
 

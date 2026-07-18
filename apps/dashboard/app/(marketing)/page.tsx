@@ -1,4 +1,6 @@
+import Image from "next/image";
 import Link from "next/link";
+import { Target, Radar, OctagonX, ShieldCheck } from "lucide-react";
 
 const SIGNAL_CLASSES = [
   "late-reaction",
@@ -9,247 +11,246 @@ const SIGNAL_CLASSES = [
   "favorite-panic",
 ];
 
+const BUILT_ON = ["TxLINE", "Solana", "Poisson", "Dixon–Coles", "Hash ledger"];
+
+const FEATURES = [
+  {
+    icon: Target,
+    title: "Own fair value",
+    body: "Opening consensus becomes scoring rates. Verified score, clock, and cards evolve the price — not a copy of the last odds tick.",
+  },
+  {
+    icon: Radar,
+    title: "Latency Radar",
+    body: "Every market reaction is classified against that price: late, fast, overreacting, stale, or unexplained.",
+  },
+  {
+    icon: OctagonX,
+    title: "Halt discipline",
+    body: "Unexplained movement pulls quotes. The desk refuses to trade against information it cannot see.",
+  },
+] as const;
+
+const STEPS = [
+  { n: "01", label: "Ingest", body: "Dual TxLINE score + odds SSE with proof gates." },
+  { n: "02", label: "Price", body: "Deterministic in-play model — fixed-point, message-id ordered." },
+  { n: "03", label: "Radar", body: "Classify the market move against tissue fair value." },
+  { n: "04", label: "Quote · grade", body: "Publish risk-approved quotes. Hash-chain everything. Grade from evidence." },
+] as const;
+
 export default function LandingPage() {
   return (
     <main>
-      {/* Hero */}
-      <section className="lp-hero">
-        <span className="lp-chip">
-          <span className="tag">THESIS</span> TxLINE prices the world. Tissue prices the game.
-        </span>
-        <h1 className="lp-display">An independent price for every live match market.</h1>
-        <p className="lp-lede">
-          Odds move the instant something happens on the pitch. Tissue calibrates from the opening
-          consensus, then evolves its own price from verified score, clock, and card state. When
-          the live market disagrees, it quotes. When a move has no cause it can see, it halts.
-        </p>
-        <div className="lp-cta-row">
-          <Link href="/overview" className="lp-btn lp-btn-primary">
-            Open the desk
-          </Link>
-          <Link href="/grade" className="lp-btn lp-btn-ghost">
-            See the grade sheet
-          </Link>
-        </div>
-        <div className="lp-ticker">
-          <span>
-            <b>120</b> tests green
-          </span>
-          <span>
-            <b>replay(corpus) === ledger</b> in CI
-          </span>
-          <span>
-            <b>0</b> wall-clock reads in a decision
-          </span>
-          <span>
-            devnet activation <b>confirmed</b>
-          </span>
-        </div>
-      </section>
-
-      {/* 1. The problem */}
-      <section className="lp-section">
-        <p className="lp-kicker">The problem</p>
-        <h2 className="lp-h2">Odds move the moment the ball does.</h2>
-        <p className="lp-p">
-          A goal, a red card, a shot on target. The screen reprices in seconds. Almost nobody has
-          an independent read on whether that move is right, too far, too slow, or driven by
-          something they cannot see. You end up reacting to the market instead of to the match.
-        </p>
-      </section>
-
-      {/* 2. What Tissue does */}
-      <div className="lp-band">
-        <section className="lp-section lp-two-col">
-          <div>
-            <p className="lp-kicker">The price</p>
-            <h2 className="lp-h2">It builds its own price from the match.</h2>
-            <p className="lp-p">
-              Tissue reads both TxLINE streams. Opening de-vigged consensus is solved into scoring
-              rates and run through Poisson with a Dixon-Coles low-score correction. Verified
-              score, minute, and red cards then evolve that model for the time remaining and the
-              current scoreline. Out comes a fair price for each market.
-            </p>
-            <p className="lp-p">
-              After opening calibration, the live state projection is not copied from the latest
-              odds tick. Comparing the two is what lets Tissue judge whether a move is information
-              or noise.
-            </p>
-          </div>
-          <div className="lp-grid">
-            <div className="lp-card">
-              <div className="lp-dot">λ</div>
-              <h3>Solved, not scraped</h3>
-              <p>Consensus 1X2 and totals invert into home and away scoring rates.</p>
-            </div>
-            <div className="lp-card">
-              <div className="lp-dot">t</div>
-              <h3>Live-adjusted</h3>
-              <p>Remaining-time decay, the scoreline in the matrix, and verified red cards.</p>
-            </div>
-            <div className="lp-card">
-              <div className="lp-dot">#</div>
-              <h3>Deterministic</h3>
-              <p>Fixed-point basis points. Message-id ordering. No wall-clock in any decision.</p>
-            </div>
-            <div className="lp-card">
-              <div className="lp-dot">§</div>
-              <h3>Cited</h3>
-              <p>Dixon-Coles 1997 for the goals model. Avellaneda-Stoikov 2008 for the quoting.</p>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      {/* 3. The Radar */}
-      <section className="lp-section">
-        <p className="lp-kicker">Latency Radar</p>
-        <h2 className="lp-h2">Every market reaction, classified against that price.</h2>
-        <p className="lp-p">
-          For each match event the Radar measures the gap from the event to the first reaction to
-          the point the line stabilizes, plus the size of the move. It sorts each reaction into a
-          class from empirical percentile bands. Deterministic, no model of the future.
-        </p>
-        <div className="lp-classes">
-          {SIGNAL_CLASSES.map((c) => (
-            <span key={c} className="lp-class">
-              {c}
+      {/* T1 · Hero only — tissue-desk-hero.jpg (light desk, left free for type) */}
+      <section className="lp-section" style={{ paddingTop: "var(--spacing-24)", paddingBottom: "var(--spacing-24)" }}>
+        <div className="lp-hero-frame lp-hero-frame-light">
+          <Image
+            src="/images/tissue-desk-hero.jpg"
+            alt="Desk monitor showing Fair Value vs Market price curves"
+            fill
+            priority
+            sizes="(max-width: 767px) 100vw, 1400px"
+            className="object-cover object-[70%_center] sm:object-center"
+          />
+          <div className="lp-hero-frame-scrim lp-hero-frame-scrim-light" aria-hidden />
+          <div className="lp-hero-frame-copy lp-hero-frame-copy-dark">
+            <span className="lp-chip" style={{ marginBottom: "var(--spacing-16)" }}>
+              <span className="tag">THESIS</span> TxLINE prices the world. Tissue prices the game.
             </span>
-          ))}
-          <span className="lp-class halt">unexplained-movement · halts</span>
+            <h1 className="lp-display lp-display-left lp-display-ink">
+              An independent price
+              <br />
+              for every live market.
+            </h1>
+            <p className="lp-lede lp-lede-left lp-lede-ink">
+              Odds move the instant the ball does. Tissue builds its own fair value from verified
+              match state, quotes when the market disagrees, and halts when a move has no cause it
+              can see.
+            </p>
+            <div className="lp-cta-row lp-cta-left">
+              <Link href="/overview" className="lp-btn lp-btn-primary">
+                Open the desk
+              </Link>
+              <Link href="/grade" className="lp-btn lp-btn-ghost">
+                See the grade sheet
+              </Link>
+              <Link href="#how-it-works" className="lp-btn lp-btn-ghost">
+                How it works
+              </Link>
+            </div>
+          </div>
         </div>
-        <p className="lp-p" style={{ marginTop: "var(--spacing-24)" }}>
-          Unexplained movement is the one that matters. Odds move, no event in the trailing window:
-          someone knows something the feed has not shown. The desk pulls its quotes and halts that
-          market. Refusing to trade against information it cannot see is the discipline, not a
-          limitation.
-        </p>
       </section>
 
-      {/* 4. The proof mechanism */}
-      <div className="lp-band">
-        <section className="lp-section">
-          <p className="lp-kicker">The backtest that can&apos;t lie</p>
-          <h2 className="lp-h2">Every decision is hash-chained and replayable.</h2>
-          <p className="lp-p">
-            Each decision is a record that embeds the triggering feed message hash and links to the
-            one before it. Every live odds input must pass the sponsor&apos;s validate_odds call;
-            decision-driving score statistics must pass validate_stat. The pricing core reads no
-            wall-clock and does no I/O, so the same corpus produces the same ledger, byte for byte.
-          </p>
-          <div className="lp-code">
-            replay(corpus) === ledger <span className="ok">✓ asserted in CI</span>
+      <section className="lp-section" style={{ paddingTop: "var(--spacing-32)", paddingBottom: "var(--spacing-32)" }}>
+        <div className="lp-built">
+          <span className="lp-kicker" style={{ margin: 0 }}>
+            Built on
+          </span>
+          <div className="lp-built-list">
+            {BUILT_ON.map((name) => (
+              <span key={name}>{name}</span>
+            ))}
           </div>
-          <div className="lp-stats">
-            <div className="lp-stat">
-              <span className="n">120</span>
-              <span className="k">tests green, including replay equality and the chaos drills</span>
-            </div>
-            <div className="lp-stat">
-              <span className="n">7</span>
-              <span className="k">halt conditions, every one automated, no human in the loop</span>
-            </div>
-            <div className="lp-stat">
-              <span className="n">1</span>
-              <span className="k">module authorized to green-light execution: the risk gate</span>
-            </div>
-            <div className="lp-stat">
-              <span className="n">0</span>
-              <span className="k">wall-clock reads inside a decision, so replay is exact</span>
-            </div>
-          </div>
-        </section>
-      </div>
+        </div>
+      </section>
 
-      {/* 5. The honest execution story */}
-      <section className="lp-section">
-        <p className="lp-kicker">The execution, stated plainly</p>
-        <h2 className="lp-h2">Quotes are published. Inputs are verified.</h2>
+      <section className="lp-section" style={{ paddingTop: 0, paddingBottom: "var(--spacing-32)" }}>
         <div className="lp-note">
-          <p>
-            We checked the sponsor&apos;s on-chain program at commit <strong>f37473a</strong>. It is a
-            data oracle: subscription, root anchoring, and validation. It has no intent-book. The
-            sponsor&apos;s own README says a non-custodial orderbook is <strong>in preparation</strong>.
-            So Tissue does not pretend to fill orders on a venue that is not live yet.
+          <p style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <ShieldCheck size={16} strokeWidth={2} aria-hidden style={{ flexShrink: 0, color: "var(--accent)" }} />
+            <span>
+              <strong>For judges.</strong> No login, no setup — everything below is live devnet
+              data or an explicit replay run.
+            </span>
           </p>
-          <p>
-            Live mode publishes every risk-approved quote through a real API and never invents a
-            counterparty, fill, or PnL. Each TxLINE odds input is checked through validate_odds;
-            cumulative goals and red cards are checked through validate_stat before either stream
-            can enter the engine. Transaction mode additionally records a confirmed odds signature.
-            A future orderbook remains a swap-in execution boundary.
-          </p>
-          <p>
-            Fill-independence is the point. Closing-line value grades every quote against the close
-            whether it matched or not. This is engineering judgment, stated as a fact.
+          <p style={{ marginBottom: 0 }}>
+            <Link href="/overview" className="evidence-link">Open the live desk</Link>
+            {" · "}
+            <Link href="/verify" className="evidence-link">Verify a decision yourself</Link>
+            {" · "}
+            <Link href="/grade" className="evidence-link">Read the grade sheet</Link>
           </p>
         </div>
       </section>
 
-      {/* 6. The grade sheet */}
-      <div className="lp-band">
-        <section className="lp-section">
-          <p className="lp-kicker">Graded from evidence</p>
-          <h2 className="lp-h2">Right or wrong, it stays in the ledger.</h2>
-          <p className="lp-p">
-            The grade sheet updates automatically. Every metric is computed from the same
-            hash-chained ledger, so the scorecard cannot drift from what the desk actually did.
-          </p>
-          <div className="lp-metrics">
-            <span className="lp-metric-pill">Closing-line value, matched or not</span>
-            <span className="lp-metric-pill">Brier score with calibration decomposition</span>
-            <span className="lp-metric-pill">Reaction-latency distributions</span>
-            <span className="lp-metric-pill">Hit rate per signal class</span>
-            <span className="lp-metric-pill">Published quote availability and closing-line value</span>
-          </div>
-        </section>
-      </div>
-
-      {/* 7. Ask Tissue */}
-      <section className="lp-section">
-        <p className="lp-kicker">Ask Tissue</p>
-        <h2 className="lp-h2">A read-only analyst over the ledger.</h2>
+      <section id="why-tissue" className="lp-section">
+        <p className="lp-kicker">Why Tissue</p>
+        <h2 className="lp-h2">Signal bots flag. Desks price.</h2>
         <p className="lp-p">
-          Ask a question in plain language. A small agent answers from the decision ledger through
-          a real MCP server with exactly three read-only tools, and cites the ledger rows it read.
-          It has no tool that can place a trade, and it runs nowhere near the decision path. It
-          narrates. It never decides.
+          Almost nobody has an independent read on whether a live move is right, too far, too slow,
+          or driven by something they cannot see. Tissue is that read — deterministic, proof-gated,
+          and graded in public.
         </p>
+        <div className="lp-grid" style={{ marginTop: "var(--spacing-32)" }}>
+          {FEATURES.map((f) => (
+            <div key={f.title} className="lp-card">
+              <div className="lp-dot" aria-hidden>
+                <f.icon size={20} strokeWidth={2} />
+              </div>
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
-      {/* 8. Into the desk */}
+      {/* T2 · Product proof — one desktop capture */}
       <div className="lp-band">
-        <section className="lp-section lp-final">
-          <p className="lp-kicker">The desk</p>
-          <h2 className="lp-h2">Open the desk.</h2>
-          <p className="lp-p" style={{ marginLeft: "auto", marginRight: "auto" }}>
-            The live tissue-vs-market chart, the quote tape, the decision feed with hash-chain
-            verify, the grade sheet, and the replay lab.
-          </p>
-          <div className="lp-routes">
-            <Link href="/quotes" className="lp-route">
-              Quotes
-            </Link>
-            <Link href="/decisions" className="lp-route">
-              Decisions
-            </Link>
-            <Link href="/grade" className="lp-route">
-              Grade
-            </Link>
-            <Link href="/replay" className="lp-route">
-              Replay
-            </Link>
-            <Link href="/analyst" className="lp-route">
-              Ask Tissue
-            </Link>
+        <section id="product" className="lp-section">
+          <div className="lp-product-head">
+            <div>
+              <p className="lp-kicker">The desk in action</p>
+              <h2 className="lp-h2">Tissue vs market. Radar. Grade.</h2>
+            </div>
+            <p className="lp-p" style={{ margin: 0 }}>
+              Dual-line fair value against the live market, halt state, and hash preview — the desk
+              product, not a mood board.
+            </p>
           </div>
-          <div className="lp-cta-row" style={{ marginTop: "var(--spacing-32)" }}>
-            <Link href="/overview" className="lp-btn lp-btn-primary">
-              Open the desk
-            </Link>
+          <div className="lp-product-frame">
+            <Image
+              src="/images/tissue-desktop-overview.jpg"
+              alt="Tissue desk overview: Fair Value vs Market chart, halt badge, hash preview"
+              fill
+              sizes="(max-width: 1023px) 100vw, 1100px"
+              className="object-cover object-top"
+            />
           </div>
         </section>
       </div>
+
+      {/* T3 · How-it-works strip — human + dual-curve moment */}
+      <section id="how-it-works" className="lp-section">
+        <div className="lp-how-grid">
+          <div>
+            <p className="lp-kicker">One loop</p>
+            <h2 className="lp-h2">Ingest, price, classify, quote.</h2>
+            <p className="lp-p" style={{ marginTop: "var(--spacing-16)" }}>
+              Fair value against the market — then decide: quote, or halt when the move has no
+              cause you can see.
+            </p>
+          </div>
+          <div className="lp-how-art">
+            <Image
+              src="/images/tissue-radar-moment.jpg"
+              alt="Analyst at a desk watching two price curves on a monitor during a live match"
+              fill
+              sizes="(max-width: 1023px) 100vw, 720px"
+              className="object-cover object-center"
+            />
+          </div>
+        </div>
+        <ol className="lp-steps">
+          {STEPS.map((s) => (
+            <li key={s.n}>
+              <span className="n">{s.n}</span>
+              <span className="t">{s.label}</span>
+              <span className="b">{s.body}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <div className="lp-band">
+        <section className="lp-section">
+          <p className="lp-kicker">Latency Radar</p>
+          <h2 className="lp-h2">Every reaction, classified.</h2>
+          <p className="lp-p">
+            For each match event the Radar measures the gap from the event to the first reaction to
+            the point the line stabilizes. Unexplained movement is the one that matters — and it
+            halts.
+          </p>
+          <div className="lp-classes">
+            {SIGNAL_CLASSES.map((c) => (
+              <span key={c} className="lp-class">
+                {c}
+              </span>
+            ))}
+            <span className="lp-class halt">unexplained-movement · halts</span>
+          </div>
+        </section>
+      </div>
+
+      <section className="lp-section">
+        <p className="lp-kicker">The backtest that can&apos;t lie</p>
+        <h2 className="lp-h2">replay(corpus) === ledger</h2>
+        <p className="lp-p">
+          Each decision embeds the triggering feed message hash and links to the one before it.
+          Odds inputs pass validate_odds; goals and red cards pass validate_stat. Same corpus,
+          same ledger, byte for byte — asserted in CI.
+        </p>
+        <div className="lp-code">
+          replay(corpus) === ledger <span className="ok">✓ asserted in CI</span>
+        </div>
+      </section>
+
+      {/* T4 · Closing CTA */}
+      <section className="lp-section" style={{ paddingTop: 0 }}>
+        <div className="lp-closing">
+          <Image
+            src="/images/tissue-closing-desk.jpg"
+            alt="Empty trading desk after the session — laptop, notebook, coffee"
+            fill
+            sizes="(max-width: 767px) 100vw, 1400px"
+            className="object-cover object-[72%_center] sm:object-center"
+          />
+          <div className="lp-closing-scrim lp-closing-scrim-light" aria-hidden />
+          <div className="lp-closing-copy">
+            <h2 className="lp-h2 lp-display-ink" style={{ maxWidth: "18ch" }}>
+              Open the desk. Grade yourself from evidence.
+            </h2>
+            <div className="lp-cta-row lp-cta-left" style={{ marginTop: "var(--spacing-24)" }}>
+              <Link href="/overview" className="lp-btn lp-btn-primary">
+                Open the desk
+              </Link>
+              <Link href="/analyst" className="lp-btn lp-btn-ghost">
+                Ask Tissue
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }

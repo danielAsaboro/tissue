@@ -27,6 +27,23 @@ hash chain. Live mode never invents counterparties, fills, or PnL.
 - Persistent normalized corpora, append-only decision ledgers, deterministic replay, and
   real-corpus evaluation that rejects synthetic input. Live processing advances one shared
   engine session per fixture; recovery verifies and repairs only a missing ledger suffix.
+- Five pricing regimes layered on the deterministic core: stoppage-time, mutual-danger,
+  narrative regime, informed-flow detection, and stale-quote decay — each independently
+  scored by the regime ablation matrix (`GET /arena/ablation`), not just bundled together.
+- Every decision record is Ed25519-signed and hash-chained into a real Merkle tree with
+  inclusion proofs, and carries a `policyHash` binding it to the exact policy snapshot that
+  produced it. A pre-match commitment plus periodic checkpoints anchor the ledger head to
+  Solana via SPL Memo; failed on-chain proofs trip a circuit breaker, not a logged warning.
+- A public machine-readable record export (`GET /record`) and an in-browser third-party
+  verifier at `/verify` on the dashboard: it recomputes the decision hash, checks the
+  Ed25519 signature, walks the Merkle proof, and fetches the anchoring transaction directly
+  from a public Solana RPC in the visitor's own browser. The daemon's server is never in the
+  trust path for that last, decisive check.
+- A Strategy Arena (`GET /arena`) that replays the same fixture through the same engine with
+  every flagged regime neutralized, for a real head-to-head CLV/Brier comparison — not a
+  second continuously running live session.
+- A wallet-balance watchdog on `/health` and `/metrics` for the anchoring keypair, and a
+  proof-failure circuit breaker that halts quoting rather than anchoring on a false claim.
 - A connected Next.js dashboard. No mock adapter or hard-coded success path exists.
 - A provenance-pinned `@slip/sdk@0.2.0` consumer with canonical market readers, WebSocket
   watchers, bigint pool/payout math, reference verification, wallet-ticket reads, and real
@@ -84,32 +101,46 @@ both real score and odds rows are captured. Its credential file is owner-readabl
 
 Daemon evidence endpoints:
 
-- `GET /health` — process liveness and current feed state
+- `GET /health` — process liveness, current feed state, and anchoring wallet balance
 - `GET /ready` — readiness requires real feed activity and no active halt
 - `GET /state` — fixtures, decisions, quotes, radar, grades, and proof evidence
+- `GET /record` — public machine-readable export for independent third-party verification
 - `GET /verify` — recomputed decision hash-chain status
-- `GET /metrics` — bounded Prometheus proof, stream, and SSE counters
+- `GET /arena` — Tissue vs. neutralized-baseline head-to-head over the same fixture
+- `GET /arena/ablation` — each pricing regime isolated against the same baseline
+- `GET /ledger/proof` — Merkle inclusion proof for a specific decision
+- `GET /policy/snapshots` — signed policy snapshots decisions were priced against
+- `GET /metrics` — bounded Prometheus proof, stream, SSE, and wallet-balance counters
 - `GET /events` — server-sent live state updates
+
+The dashboard's `/verify` page runs the full chain above client-side — hash recomputation,
+signature check, Merkle walk, and the anchoring transaction fetch — directly against a public
+Solana RPC from the visitor's browser, so the daemon is never trusted for the final check.
 
 ## Layout
 
 ```text
 apps/daemon/src/ingest       TxLINE auth, normalization, snapshots, dual SSE
 apps/daemon/src/runtime      explicit live service and durable state publication
-apps/daemon/src/tissue       deterministic goals model and in-play repricing
+apps/daemon/src/tissue       deterministic goals model and in-play repricing regimes
 apps/daemon/src/radar        event-to-market reaction classification
 apps/daemon/src/strategy     edge, inventory skew, sizing, quote proposals
 apps/daemon/src/risk         sole quote-publication authorization boundary
-apps/daemon/src/exec         replay book + live Solana score/odds verification boundary
-apps/daemon/src/ledger       hash-chained decisions
+apps/daemon/src/exec         replay book + live Solana score/odds verification + anchoring
+apps/daemon/src/ledger       hash-chained, Ed25519-signed, Merkle-provable decisions
+apps/daemon/src/arena        Strategy Arena and regime ablation matrix
 apps/daemon/src/grader       CLV, Brier, latency, class performance
 apps/daemon/src/evaluation   real-corpus-only evaluation and baselines
-apps/dashboard               live HTTP-backed Next.js evidence console
+apps/daemon/scripts          devnet activation, Surfpool smoke test, restart/stream-drop drills
+apps/dashboard               live HTTP-backed Next.js evidence console + in-browser verifier
+apps/dashboard/e2e           Playwright E2E suite against a fake-daemon fixture
 apps/analyst                 isolated MCP analyst over real live exports and read-only tools
 packages/shared              domain contracts
 packages/slip                generic packed-SDK consumer, market views, watchers, action builders
 vendor                       packed SDK plus source-commit and integrity provenance
+docs                         Mintlify documentation site
 ```
 
-Operational detail is in `RUNBOOK.md`; bounty packaging is in `SUBMISSION.md`; API
-integration feedback is in `feedback.md`.
+Operational detail is in `RUNBOOK.md`; system architecture and Mermaid diagrams are in
+`architecture.md`; bounty packaging is in `SUBMISSION.md`; API integration feedback is in
+`feedback.md`.

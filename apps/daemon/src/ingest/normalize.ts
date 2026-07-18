@@ -45,10 +45,21 @@ function pick<T>(obj: Record<string, unknown>, keys: string[], fallback: T): T {
   return fallback;
 }
 
+/** A cumulative stat (goals, red cards) can never be negative — clamp defensively rather
+ *  than let a malformed or corrupted field silently produce an impossible match state. */
 function statValue(stats: Record<string, unknown> | undefined, key: number): number {
   if (!stats) return 0;
   const v = stats[String(key)] ?? stats[key as unknown as string];
-  return typeof v === "number" ? v : Number(v ?? 0) || 0;
+  const n = typeof v === "number" ? v : Number(v ?? 0) || 0;
+  return Math.max(0, n);
+}
+
+/** Parses a feed timestamp defensively. Returns undefined (never NaN/Infinity/a string)
+ *  so callers can reject the whole message rather than silently carry a broken clock —
+ *  ts is the ordering key for feed-gap and clock-skew detection downstream. */
+function finiteTimestamp(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /** Map a free_kick FreeKickType (or shot) to a momentary pressure class. */
@@ -72,7 +83,8 @@ export function normalizeScores(raw: RawScores, network: Network): ScoreMessage 
 
   const seq = pick<number>(r, ["Seq", "seq"], 0);
   const globalSeq = pick<number>(r, ["GlobalSeq", "globalSeq"], 0);
-  const ts = pick<number>(r, ["Ts", "ts"], 0);
+  const ts = finiteTimestamp(pick(r, ["Ts", "ts"], 0));
+  if (ts === undefined) return null;
   const statusId = pick<number>(r, ["StatusId", "statusId", "status"], 0);
   const stats = pick<Record<string, unknown>>(r, ["Stats", "stats"], {});
 
@@ -179,8 +191,12 @@ export function normalizeOdds(raw: RawOdds, network: Network): OddsMessage | nul
   for (let i = 0; i < priceNames.length; i++) {
     const sel = canonicalSelection(priceNames[i]!, marketKey.market);
     if (!sel) continue;
-    const priceMilli = prices[i]!; // decimal odds ×1000
-    if (priceMilli <= 0) continue;
+    // Coerce explicitly and check finiteness BEFORE the sign check: a non-numeric price
+    // (e.g. a malformed/corrupted feed value) coerces to NaN, and `NaN <= 0` is false — a
+    // naive sign-only check would let it through and poison the whole market's de-vigged
+    // consensus with NaN (every selection sums against `overround`, below).
+    const priceMilli = Number(prices[i]); // decimal odds ×1000
+    if (!Number.isFinite(priceMilli) || priceMilli <= 0) continue;
     rawOdds[sel] = milliOdds(priceMilli);
     impliedByName[sel] = 1000 / priceMilli; // implied probability (0..1)
   }
@@ -199,15 +215,18 @@ export function normalizeOdds(raw: RawOdds, network: Network): OddsMessage | nul
     consensus[k] = bps(Math.round((impliedByName[k]! / overround) * 10000));
   }
 
+  const ts = finiteTimestamp(pick(r, ["ts", "Ts"], 0));
+  if (ts === undefined) return null;
+
   const msgId =
     String(pick(r, ["message_id", "MessageId"], "")) ||
-    `${fixtureId}:o:${pick(r, ["ts", "Ts"], 0)}`;
+    `${fixtureId}:o:${ts}`;
 
   const base = {
     kind: "odds" as const,
     msgId,
     fixtureId,
-    ts: millis(pick<number>(r, ["ts", "Ts"], 0)),
+    ts: millis(ts),
     network,
     marketKey,
     consensus: consensus as ProbVector,

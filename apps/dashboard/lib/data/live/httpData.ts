@@ -8,8 +8,12 @@ import type {
   TissuePrice,
 } from "@tissue/shared";
 import type {
+  AblationMatrixSummary,
+  ArenaSummary,
   DashboardData,
   AnchorEvidenceRow,
+  CommitmentTimelineRow,
+  EquityCurvePoint,
   GaugeState,
   HaltState,
   QuoteTapeRow,
@@ -18,6 +22,7 @@ import type {
 } from "../types";
 
 interface ApiQuote {
+  readonly msgId: string;
   readonly ts: number;
   readonly marketKey: string;
   readonly selection: string;
@@ -26,6 +31,23 @@ interface ApiQuote {
   readonly sizeUnits: number;
   readonly sourceOddsMsgId: string;
   readonly matched: boolean;
+}
+
+interface ApiPreMatchCommitment {
+  readonly hash: string;
+  readonly status: "confirmed" | "failed";
+  readonly submittedAt: number;
+  readonly txSig?: string;
+  readonly error?: string;
+}
+
+interface ApiCheckpoint {
+  readonly seq: number;
+  readonly hash: string;
+  readonly status: "confirmed" | "failed";
+  readonly submittedAt: number;
+  readonly txSig?: string;
+  readonly error?: string;
 }
 
 interface ApiFixture {
@@ -37,6 +59,8 @@ interface ApiFixture {
   readonly headHash: string;
   readonly hashChainOk: boolean;
   readonly anchors: readonly AnchorEvidenceRow[];
+  readonly preMatchCommitment: ApiPreMatchCommitment | null;
+  readonly checkpoints: readonly ApiCheckpoint[];
 }
 
 interface ApiState {
@@ -117,22 +141,32 @@ export class HttpDashboardData implements DashboardData {
     const state = await this.state();
     const fixture = this.active(state);
     const anchors = new Map((fixture?.anchors ?? []).map((evidence) => [evidence.messageId, evidence]));
-    return (fixture?.quotes ?? []).map((quote) => ({
-      tsMs: quote.ts,
-      marketLabel: quote.marketKey,
-      selectionLabel: quote.selection,
-      side: quote.side,
-      priceMilliOdds: quote.quoteMilliOdds,
-      sizeUnits: quote.sizeUnits,
-      status: quote.matched
-        ? "Replay matched"
-        : anchors.get(quote.sourceOddsMsgId)?.result
-          ? "Published"
-          : anchors.has(quote.sourceOddsMsgId)
-            ? "Proof failed"
-            : "Pending proof",
-      simulated: quote.matched,
-    }));
+    const decisionByTriggerMsgId = new Map((fixture?.decisions ?? []).map((d) => [d.triggerMsgId, d]));
+    const cluster = state.network === "devnet" ? "?cluster=devnet" : "";
+    return (fixture?.quotes ?? []).map((quote) => {
+      const anchor = anchors.get(quote.sourceOddsMsgId);
+      return {
+        tsMs: quote.ts,
+        marketLabel: quote.marketKey,
+        selectionLabel: quote.selection,
+        side: quote.side,
+        priceMilliOdds: quote.quoteMilliOdds,
+        sizeUnits: quote.sizeUnits,
+        status: quote.matched
+          ? "Replay matched"
+          : anchor?.result
+            ? "Published"
+            : anchor
+              ? "Proof failed"
+              : "Pending proof",
+        simulated: quote.matched,
+        proofMessageId: quote.sourceOddsMsgId,
+        ...(decisionByTriggerMsgId.get(quote.msgId)?.hash
+          ? { decisionHash: decisionByTriggerMsgId.get(quote.msgId)!.hash }
+          : {}),
+        ...(anchor?.txSig ? { explorerUrl: `https://explorer.solana.com/tx/${anchor.txSig}${cluster}` } : {}),
+      };
+    });
   }
 
   async getRadarEvents(): Promise<readonly RadarEvent[]> {
@@ -196,5 +230,85 @@ export class HttpDashboardData implements DashboardData {
   async getAnchorEvidence(): Promise<readonly AnchorEvidenceRow[]> {
     const state = await this.state();
     return this.active(state)?.anchors ?? [];
+  }
+
+  async getCommitmentTimeline(): Promise<readonly CommitmentTimelineRow[]> {
+    const state = await this.state();
+    const fixture = this.active(state);
+    if (!fixture) return [];
+    const rows: CommitmentTimelineRow[] = [];
+    if (fixture.preMatchCommitment) {
+      const c = fixture.preMatchCommitment;
+      rows.push({
+        kind: "pre-match",
+        submittedAt: c.submittedAt,
+        status: c.status,
+        hash: c.hash,
+        ...(c.txSig ? { txSig: c.txSig } : {}),
+        ...(c.error ? { error: c.error } : {}),
+      });
+    }
+    for (const c of fixture.checkpoints) {
+      rows.push({
+        kind: "checkpoint",
+        seq: c.seq,
+        submittedAt: c.submittedAt,
+        status: c.status,
+        hash: c.hash,
+        ...(c.txSig ? { txSig: c.txSig } : {}),
+        ...(c.error ? { error: c.error } : {}),
+      });
+    }
+    return rows.sort((a, b) => a.submittedAt - b.submittedAt);
+  }
+
+  async getArenaSummary(): Promise<ArenaSummary> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/arena`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      return { available: false, reason: "The Tissue daemon is temporarily unavailable." };
+    }
+    if (!response.ok && response.status !== 404) {
+      return { available: false, reason: `The Tissue daemon returned HTTP ${response.status}.` };
+    }
+    return (await response.json()) as ArenaSummary;
+  }
+
+  async getEquityCurve(): Promise<readonly EquityCurvePoint[]> {
+    const state = await this.state();
+    const fixture = this.active(state);
+    return (fixture?.decisions ?? []).map((record) => ({
+      seq: record.seq,
+      tsMs: record.ts,
+      minute: record.state.minute,
+      realizedPnlUnits: record.state.exposure.realizedPnlUnits,
+      peakEquityUnits: record.state.exposure.peakEquityUnits,
+      drawdownUnits: record.state.exposure.drawdownUnits,
+    }));
+  }
+
+  async getActiveFixtureId(): Promise<string | null> {
+    const state = await this.state();
+    return this.active(state)?.fixtureId ?? null;
+  }
+
+  async getAblationMatrix(): Promise<AblationMatrixSummary> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/arena/ablation`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch {
+      return { available: false, reason: "The Tissue daemon is temporarily unavailable." };
+    }
+    if (!response.ok && response.status !== 404) {
+      return { available: false, reason: `The Tissue daemon returned HTTP ${response.status}.` };
+    }
+    return (await response.json()) as AblationMatrixSummary;
   }
 }

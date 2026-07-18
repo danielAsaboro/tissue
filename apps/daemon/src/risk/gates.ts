@@ -13,7 +13,8 @@ import type { QuoteProposal } from "../strategy/strategy.js";
  * Pure given its inputs. Enforces, in priority order:
  *   1. drawdown kill — global, latched, operator-restart-only (never auto-resumes)
  *   2. stale-feed halt — hard feed gap ⇒ cancel all, SAFE
- *   3. unexplained-movement halt — pull quotes on the affected market (adverse selection)
+ *   3. unexplained-movement / informed-flow halt — pull quotes on the affected market
+ *      (adverse selection: no explaining event, or an anomalous move velocity)
  *   4. model-divergence sanity band — tissue vs market beyond band ⇒ pull + flag
  *   5. exposure caps (per market / per fixture) + max open intents
  */
@@ -66,13 +67,13 @@ export function evaluateRisk(
     return { killed: false, halts, approved: [], rejected: proposals.map((p) => ({ proposal: p, reason: "feed-gap" })), flags };
   }
 
-  // 3. Unexplained-movement halts (per market).
+  // 3. Unexplained-movement / informed-flow halts (per market, same adverse-selection gate).
   const haltedMarkets = new Set<string>();
   for (const h of ctx.radarHalts) {
-    if (h.reason !== "unexplained-movement" || !h.marketKey) continue;
+    if ((h.reason !== "unexplained-movement" && h.reason !== "informed-flow") || !h.marketKey) continue;
     const key = marketKeyString(h.marketKey);
     haltedMarkets.add(key);
-    halts.push({ scope: "MARKET", reason: "unexplained-movement", marketKey: h.marketKey, detail: h.detail });
+    halts.push({ scope: "MARKET", reason: h.reason, marketKey: h.marketKey, detail: h.detail });
   }
 
   // 4. Model-divergence sanity band (per market): protect against our own model failure.

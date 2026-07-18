@@ -1,0 +1,101 @@
+---
+title: "Autonomous Operation & Continuous Improvement"
+description: "What Tissue actually does without a human in the loop, and what it deliberately keeps a human in the loop for."
+---
+
+<Warning>
+This page exists to be precise about a real design decision: Tissue does **not**
+self-modify its own policy, and it does **not** feed operator-facing analysis back into
+its own strategy. Both were deliberately not built, for reasons explained below — not
+because they were out of time, but because they would break guarantees this project is
+built around.
+</Warning>
+
+## What runs autonomously
+
+Once started with valid credentials, the live daemon requires no human intervention to:
+
+- Ingest both TxLINE SSE streams, reconnect on disconnect, and renew credentials on
+  expiry
+- Verify every message's source proof before admission
+- Reprice, classify, risk-check, and quote on every admitted message
+- Halt itself on any of the conditions in [Core Concepts → Discipline
+  Engine](/core-concepts#the-discipline-engine)
+- Recover deterministically after a crash — on restart, it verifies the persisted
+  ledger prefix against a fresh replay of the authoritative corpus and repairs only the
+  deterministic missing suffix, never trusting a locally cached receipt as source
+  authority
+- Submit pre-match and periodic checkpoint anchoring transactions
+- Record signed policy snapshots when the effective policy changes across a restart
+
+None of this requires a human to click anything. It is not, however, self-*improving*
+in the sense of changing its own behavior based on results — that boundary is
+intentional.
+
+## Why there is no autonomous policy mutation
+
+`policy.toml` is the single source of truth for every tunable constant in the pricing
+and risk logic. That is a real, checkable property of this codebase: any judge can
+`grep` the code and confirm no magic numbers exist outside it. A nightly job that
+silently rewrote thresholds based on overnight results would erase that property —
+every constant would no longer be traceable to a specific, explainable human decision
+in git history.
+
+## The honest alternative: human-reviewed tuning suggestions
+
+Instead, `evaluate:tuning` runs a real evaluation:
+
+```bash
+pnpm --filter @tissue/daemon evaluate:tuning
+```
+
+It evaluates a small grid of candidate values for a real policy parameter
+(`strategy.edge_threshold_bps`) against the **calibration split only** — it never
+touches the holdout fixtures, preserving the same calibration/holdout discipline used
+throughout evaluation — and prints ranked suggestions with their evidence:
+
+```json
+{
+  "suggestions": [{
+    "parameter": "strategy.edge_threshold_bps",
+    "baselineValue": 150,
+    "suggestedValue": 90,
+    "confident": false,
+    "reason": "Only 1 calibration fixture(s) — fewer than 3. This grid is presented for transparency only; it is NOT a statistically valid comparison..."
+  }]
+}
+```
+
+It **never writes `policy.toml`**. A human reads the output, verifies it against the
+holdout split (`evaluate:calibration`), and manually edits the config — exactly like
+any other change to this codebase, reviewable in a diff.
+
+<Note>
+With only two real captured fixtures so far, the tool honestly reports itself as
+**underpowered** rather than presenting a confident recommendation. That flag is the
+point — it exists specifically to stop this tool from overfitting itself to noise.
+</Note>
+
+## Why the analyst layer never feeds back into strategy
+
+The analyst service is a read-only forensics layer — it answers questions about what
+the desk already did, using an LLM over a read-only SQLite projection of the ledger. It
+opens its database connection with `readOnly: true` at the SQLite layer, has no write,
+post, or execute tool of any kind, and this isolation is a tested guarantee (see
+[Verifiability](/verifiability)).
+
+Feeding the analyst's output — or a "memory" built from it — back into pricing or
+strategy would mean an LLM's narration could eventually influence a real decision. That
+is exactly the boundary this project refuses to cross. The analyst can find patterns
+(see [`find_similar_decisions`](/reference#find_similar_decisions)) and explain them to
+a human, but it cannot act, and it cannot change what Tissue will do next.
+
+## The real proof-of-learning mechanism: the Strategy Arena
+
+Rather than an opaque "the desk is improving" claim, Tissue's actual answer to "is this
+working?" is the Strategy Arena and its regime ablation matrix (see
+[Architecture](/architecture#the-strategy-arena-ab-comparison)): a real, computed,
+re-runnable head-to-head between the full desk and a neutralized baseline, plus a
+per-regime breakdown of which heuristic is actually contributing. This is graded with
+the same CLV/Brier grader used everywhere else, on demand, over the same real captured
+corpus — not asserted, not simulated.

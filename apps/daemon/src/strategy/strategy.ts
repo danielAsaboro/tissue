@@ -1,6 +1,8 @@
 import {
   type Edge,
+  type Intent,
   type MarketKey,
+  type NarrativeRegime,
   type OddsMessage,
   type ProbVector,
   type RadarClass,
@@ -15,6 +17,7 @@ import type { Policy } from "../config/policy.js";
 import type { PricedMarkets } from "../tissue/price.js";
 import { reservationQuote } from "./reservation.js";
 import { fractionalKellyStake, type KellyConfig } from "./kelly.js";
+import { restingQuoteAgeMs } from "./staleQuote.js";
 
 /**
  * Strategy (PRD §2). Pure. [LANE: Tim]. Turns the tissue price + the live market into
@@ -43,6 +46,13 @@ export interface StrategyInputs {
   readonly inventoryNorm: Map<string, number>;
   readonly stalenessMs: number;
   readonly radarClass: RadarClass | undefined;
+  readonly stoppageActive: boolean;
+  readonly mutualDangerActive: boolean;
+  readonly narrativeRegime: NarrativeRegime;
+  /** The desk's own currently open intents (staleQuote.ts) and the current feed ts, used to
+   *  compute how long the resting quote on each selection has sat unchallenged. */
+  readonly openIntents: readonly Intent[];
+  readonly nowTs: number;
 }
 
 /** Per-selection edge (tissue − market), the quoting driver. */
@@ -78,9 +88,20 @@ export function proposeQuotes(inp: StrategyInputs, policy: Policy): QuoteProposa
   if (!policy.markets.in_play_enabled) return [];
 
   const edges = computeEdges(inp.priced, inp.market);
+  // Mutual-danger: the next-goal distribution is bimodal (PRD extension, model.mutual_danger),
+  // not the Poisson point estimate's confident middle — cut size, don't just trust the price.
+  // Narrative regime: size to the market's persistent behavior, not just its last signal
+  // (radar/narrative.ts) — multiplicative with mutual-danger, not a replacement for it.
+  const nc = policy.strategy.narrative_conditioning;
+  const narrativeSizeMult =
+    inp.narrativeRegime === "compounding" ? nc.compounding_size_mult
+    : inp.narrativeRegime === "cautious" ? nc.cautious_size_mult
+    : inp.narrativeRegime === "oscillating" ? nc.oscillating_size_mult
+    : 1;
+  const sizeMult = (inp.mutualDangerActive ? policy.strategy.mutual_danger_size_mult : 1) * narrativeSizeMult;
   const kelly: KellyConfig = {
     kellyFraction: policy.sizing.kelly_fraction,
-    bankrollUnits: policy.risk.exposure_cap_per_fixture_units,
+    bankrollUnits: Math.round(policy.risk.exposure_cap_per_fixture_units * sizeMult),
     minStakeUnits: policy.sizing.min_stake_units,
     maxStakeUnits: policy.sizing.max_stake_units,
   };
@@ -90,12 +111,20 @@ export function proposeQuotes(inp: StrategyInputs, policy: Policy): QuoteProposa
     if (Math.abs(e.edgeBps) < policy.strategy.edge_threshold_bps) continue;
 
     const selKey = `${marketKeyString(e.marketKey)}:${e.selection}`;
+    const restingAgeMs = Math.max(
+      restingQuoteAgeMs(inp.openIntents, e.marketKey, e.selection as Selection, "BACK", inp.nowTs),
+      restingQuoteAgeMs(inp.openIntents, e.marketKey, e.selection as Selection, "LAY", inp.nowTs),
+    );
     const q = reservationQuote(
       {
         fairProbBps: e.tissueProb,
         inventoryNorm: inp.inventoryNorm.get(selKey) ?? 0,
         stalenessMs: inp.stalenessMs,
         radarClass: inp.radarClass,
+        stoppageActive: inp.stoppageActive,
+        mutualDangerActive: inp.mutualDangerActive,
+        narrativeRegime: inp.narrativeRegime,
+        restingQuoteAgeMs: restingAgeMs,
       },
       policy,
     );

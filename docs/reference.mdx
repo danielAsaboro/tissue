@@ -1,0 +1,112 @@
+---
+title: "Technical Reference"
+description: "TxLINE endpoints, data schemas, configuration, and on-chain program details."
+---
+
+## TxLINE endpoints used
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /auth/guest/start` | Expiring guest JWT + renewal |
+| `POST /api/token/activate` | Activated API token (handles both observed plain-text and JSON response shapes) |
+| `GET /api/scores/stream` | Live match state, SSE |
+| `GET /api/odds/stream` | Live StablePrice consensus odds, SSE |
+| `GET /api/scores/snapshot/{fixtureId}` | Historical/activation capture support |
+| `GET /api/odds/snapshot/{fixtureId}?asOf={ts}` | Historical odds capture |
+| `GET /api/odds/validation?messageId={id}&ts={ts}` | Merkle proof for `validate_odds` |
+| `GET /api/scores/stat-validation?fixtureId={id}&seq={seq}&statKey={key}` | Score-stat Merkle proof for `validate_stat` |
+
+## On-chain program IDs
+
+| Network | TxLINE oracle program |
+|---|---|
+| Devnet | `6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J` |
+| Mainnet | `9ExbZjAapQww1vfcisDmrngPinHTEfpjYRWMunJgcKaA` |
+
+| Anchoring | Program |
+|---|---|
+| Pre-Match Commitment + periodic checkpoints | SPL Memo — `MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr` |
+
+## Daemon API endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/health` | GET | Liveness |
+| `/ready` | GET | Readiness (verified proofs present, no recent failures) |
+| `/state` | GET | Full desk snapshot |
+| `/verify` | GET | Hash-chain verification per fixture |
+| `/arena` | GET | Strategy Arena head-to-head |
+| `/arena/ablation` | GET | Regime ablation matrix |
+| `/grade-card.svg` | GET | Shareable grade card |
+| `/ledger/proof` | GET | Merkle inclusion proof for one decision |
+| `/policy/snapshots` | GET | Signed policy change log |
+| `/metrics` | GET | Prometheus-format metrics |
+| `/events` | GET | Read-only SSE evidence stream |
+
+## Analyst MCP tools
+
+| Skill | Tools |
+|---|---|
+| `ledger-forensics` | `get_recent_decisions`, `get_signal_class_stats`, `query_ledger_by_fixture`, `find_similar_decisions` |
+| `slip-market-intelligence` | `list_slip_markets`, `inspect_slip_market`, `list_slip_wallet_tickets` |
+| `slip-settlement-audit` | `verify_slip_market_reference`, `inspect_slip_market` |
+
+### `find_similar_decisions`
+
+Structured pattern recall over the read-only ledger projection: same radar class (or
+same action, if the reference has none), match-minute within tolerance, and edge
+magnitude within tolerance, ranked by combined distance. Deliberately not an embeddings
+claim — see [Autonomous Operation](/autonomous-operation).
+
+## Decision record schema (summary)
+
+```typescript
+interface DecisionRecord {
+  seq: number;
+  triggerMsgId: string;
+  triggerHash: string;
+  triggerNetwork: "devnet" | "mainnet";
+  ts: number;
+  action: "POST" | "REPLACE" | "CANCEL" | "NO_ACTION" | "HALT";
+  radarClass?: string;
+  haltReason?: string;
+  state: StateSnapshot;      // minute, score, cards, inventory, exposure, regime flags
+  tissueProb: number;        // bps
+  marketProb: number;        // bps
+  edgeBps: number;
+  intents: Intent[];
+  anchorTxSig?: string;
+  simulated: boolean;
+  prevHash: string;
+  hash: string;
+  signature?: string;        // Ed25519, hex
+  signerPubkey?: string;     // base58
+}
+```
+
+## Key configuration (`policy.toml`)
+
+Every tunable constant in the pricing and risk logic lives here — no magic numbers
+outside it. Selected fields:
+
+```toml
+[strategy]
+edge_threshold_bps = 150          # minimum |tissue_p - market_p| to quote
+base_spread_bps = 80
+stoppage_spread_mult = 1.3
+mutual_danger_spread_mult = 1.5
+
+[risk]
+drawdown_kill_units = 3_000_000_000
+portfolio_drawdown_kill_units = 7_000_000_000
+proof_failure_window = 20
+proof_failure_min_samples = 8
+proof_failure_rate_halt = 0.5
+
+[exec]
+checkpoint_interval_decisions = 20   # periodic on-chain checkpoint cadence
+anchor_sample_rate = 1.0
+```
+
+Config validation is an exhaustive recursive shape-check against every field — a
+missing field fails loudly at boot instead of silently disabling a risk gate.

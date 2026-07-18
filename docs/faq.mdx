@@ -1,0 +1,75 @@
+---
+title: "FAQ & Limitations"
+description: "Common questions, paper-trading disclaimers, and what depends on TxLINE data availability."
+---
+
+## Does Tissue execute real trades?
+
+No. TxLINE's current on-chain program has no intent-book or order-matching
+instruction, so live mode publishes risk-approved quotes and never invents a fill, a
+counterparty, or PnL. This is disclosed everywhere it's relevant — see
+[Limitations](#limitations).
+
+## Is the "learning" real, or marketing?
+
+The Strategy Arena and regime ablation matrix are real, re-runnable, computed
+comparisons over real captured corpora — that's the actual evidence. Tissue does not
+autonomously rewrite its own policy overnight; see [Autonomous
+Operation](/autonomous-operation) for exactly why, and what the honest alternative
+(human-reviewed tuning suggestions) looks like instead.
+
+## How rigorously is this actually tested?
+
+322 tests across the daemon, dashboard, and analyst, all real — no mocked units under
+test. That includes suites purpose-built to find real bugs, not just confirm happy
+paths: adversarial/malformed input against the TxLINE ingest pipeline (corrupted
+timestamps, tampered proof responses, NaN-producing prices), adversarial prompts and
+tool-call spoofing against the analyst's LLM+MCP loop, a real end-to-end browser suite
+against every dashboard page and desk state, and two independent process-level chaos
+drills (crash/restart, and SSE disconnect/reconnect) run against real TxLINE and Solana
+infrastructure. This testing effort itself found and fixed two real bugs — see the
+[Changelog](/feedback-roadmap#changelog) for exactly what and why. See
+[Deployment → Testing & verification](/deployment#testing-verification) for how to run
+every suite yourself.
+
+## Why does the calibration/holdout tool say "underpowered"?
+
+Because it currently has only two real captured TxLINE fixtures to work with — its own
+threshold requires at least three fixtures per side before it will trust a comparison.
+That's the tool working correctly, not failing. More real captures make the flag go
+away on their own.
+
+## What's StablePrice, and why does it matter for informed-flow?
+
+TxLINE's StablePrice is a single de-margined consensus odds stream, not per-bookmaker
+lines — confirmed against both captured real data and TxLINE's current live docs. This
+is why the informed-flow signal classifies a move's *velocity* against a market's own
+trailing distribution, instead of assuming cross-bookmaker propagation data that
+doesn't exist in this feed.
+
+## Limitations
+
+- **No real order execution** — no sponsor on-chain intent-book exists yet
+- **Underpowered calibration** — only two real fixtures captured so far; more real
+  match captures are needed before any tuning conclusion is trustworthy
+- **One-fixture-focus by default** — portfolio risk caps support concurrent fixtures,
+  but the desk's design center is one fixture at a time
+- **Devnet/mainnet IDL mismatch** — a real process-level restart drill against mainnet
+  data surfaced that the bundled IDL is devnet-specific; documented honestly rather
+  than silently worked around
+- **Public devnet RPC rate limiting** — observed during real restart-drill testing;
+  affects proof-fetch reliability under load on the public devnet RPC, not a code bug.
+  Local Solana anchoring tests now run against a local Surfpool validator instead,
+  sidestepping this specific limitation for anchoring-flow testing.
+- **Historical proof availability during chaos drills** — TxLINE's proof endpoints
+  don't reliably serve proofs for old/replayed messages, which blocks a live
+  SIGKILL-during-anchor-submission drill against a replayed corpus specifically. Worked
+  around with an independent stream-drop/reconnect drill (`drill:streamdrop`) that
+  proves real SSE reconnect resilience without depending on proof-verification success.
+
+## Paper-trading disclaimer
+
+All PnL, fills, and settlement figures shown anywhere in Tissue's output are labeled
+`simulated` and apply only to replay/research mode. Nothing in this project constitutes
+financial advice, and no real capital is placed or at risk through Tissue's current
+execution model.

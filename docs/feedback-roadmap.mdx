@@ -1,0 +1,77 @@
+---
+title: "Feedback & Roadmap"
+description: "What we learned building against TxLINE, and what's next."
+---
+
+## Feedback for the TxLINE team
+
+What worked especially well:
+
+- One normalized StablePrice schema makes strategy inputs simple and deterministic
+- Message IDs and timestamps provide strong replay/dedupe keys
+- Merkle proof endpoints and Solana validation make source evidence independently
+  checkable
+- Dual SSE streams support direct event-to-market latency analysis
+
+Friction encountered (see the project's `feedback.md` for full detail):
+
+- Activation response shape varies (plain-text vs JSON) and required handling both
+- Snapshot `asOf` semantics needed clarification during corpus capture
+- The odds proof endpoint was, at the time, undocumented
+- A real process-level restart drill surfaced a devnet/mainnet IDL mismatch and public
+  devnet RPC rate limiting under load
+- Reconfirmed on a later rebuild: TxLINE's proof endpoints don't reliably serve proofs
+  for historical/replayed messages, which blocks a live SIGKILL-during-anchor-submission
+  drill specifically — worked around with an independent stream-drop/reconnect drill
+  that doesn't depend on any message passing proof verification (see below)
+
+## Known limitations and future improvements
+
+- Capture more real TxLINE fixtures to move the calibration/holdout comparison out of
+  "underpowered" territory
+- Extend on-chain anchoring evidence once TxLINE exposes any additional oracle
+  primitives beyond `validate_odds`/`validate_stat`
+- Revisit real order execution if/when a sponsor-side intent-book or settlement program
+  becomes available
+- Confirm with the TxLINE team whether `/api/odds/validation` and
+  `/api/scores/stat-validation` are meant to serve proofs for historical/replayed
+  messages, or are intentionally scoped to recent/live data only — the one remaining
+  blocker on a full live anchor-submission chaos drill
+
+## Changelog
+
+<Accordion title="Unreleased">
+- Ed25519 signing of every ledger record
+- Real Merkle tree + inclusion-proof API (`/ledger/proof`)
+- Periodic on-chain checkpoint anchoring, extending the Pre-Match Commitment
+- Aggregate proof-failure-rate circuit breaker
+- Signed policy config snapshots
+- Human-reviewed tuning-suggestion tool (`evaluate:tuning`)
+- N-way regime ablation matrix in the Strategy Arena
+- Decision-loop and proof-verification latency histograms on `/metrics`
+- Equity curve on the dashboard
+- Structured pattern-recall tool (`find_similar_decisions`) in the analyst layer
+- Local Solana anchoring test suite against Surfpool (`test:surfpool`) — real
+  transaction-level scenarios without racing public devnet's rate limits
+- Adversarial input suites for both the feed ingest pipeline and the analyst's
+  LLM+MCP tool loop — found and fixed two real bugs: a malformed odds price could
+  silently poison an entire market's consensus with NaN, and the analyst's tool-loop
+  fallback returned a blank answer instead of an explanatory message
+- Dashboard end-to-end suite (Playwright) covering every page under every desk status
+- A second real process-level chaos drill (`drill:streamdrop`) exercising SSE
+  disconnect/reconnect resilience independent of TxLINE proof-verification success
+</Accordion>
+
+## Contributing
+
+This repository is currently private under a competition embargo. Once publication is
+authorized:
+
+- Follow the existing pattern discipline: every tunable constant belongs in
+  `policy.toml`, never hardcoded
+- New heuristics must be flagged, individually toggleable, and testable in isolation
+  via the regime ablation matrix
+- No feature may compromise the analyst layer's read-only isolation or the
+  deterministic replay guarantee
+- Every PR should include real test coverage — this project treats "tests exist" as a
+  hard requirement, not a nice-to-have

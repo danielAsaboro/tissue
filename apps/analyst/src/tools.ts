@@ -87,6 +87,31 @@ export const TOOLS: readonly ToolDef[] = [
     },
   },
   {
+    name: "find_similar_decisions",
+    description:
+      "Find past decisions structurally similar to a reference decision — same radar class (or same action when the reference has none), match-minute within tolerance, and edge magnitude within tolerance, ranked by combined distance. This is structured pattern recall, not embeddings-based semantic search — every result is a real, citable ledger row, not a fabricated similarity score. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fixture_id: { type: "string", description: "Fixture id of the reference decision (required)." },
+        seq: { type: "integer", description: "Sequence number of the reference decision within that fixture (required)." },
+        minute_tolerance: { type: "integer", description: "Match-minute tolerance in minutes (default 10)." },
+        edge_tolerance_bps: { type: "integer", description: "Edge magnitude tolerance in bps (default 100)." },
+        limit: { type: "integer", description: "Max rows (1-50, default 10)." },
+      },
+      required: ["fixture_id", "seq"],
+      additionalProperties: false,
+    },
+    handler: ({ db }, args) => {
+      const rows = db.findSimilarDecisions(String(args.fixture_id ?? ""), Number(args.seq), {
+        ...(typeof args.minute_tolerance === "number" ? { minuteToleranceMin: args.minute_tolerance } : {}),
+        ...(typeof args.edge_tolerance_bps === "number" ? { edgeToleranceBps: args.edge_tolerance_bps } : {}),
+        ...(typeof args.limit === "number" ? { limit: args.limit } : {}),
+      });
+      return withCitations(rows);
+    },
+  },
+  {
     name: "list_slip_markets",
     description:
       "List verified Slip markets from the configured Solana program, optionally filtered by TxLINE fixture or on-chain status. Returns pool-derived probabilities, fees, payout projection, canonical Rulebook hash, and settlement state. Read-only.",
