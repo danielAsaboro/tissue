@@ -14,7 +14,8 @@ export type RadarClass =
   | "stale-line"
   | "draw-compression"
   | "favorite-panic"
-  | "unexplained-movement";
+  | "unexplained-movement"
+  | "informed-flow";
 
 export const RADAR_CLASSES: readonly RadarClass[] = [
   "late-reaction",
@@ -24,6 +25,7 @@ export const RADAR_CLASSES: readonly RadarClass[] = [
   "draw-compression",
   "favorite-panic",
   "unexplained-movement",
+  "informed-flow",
 ];
 
 /** A match event the radar keys reactions against (goal, red, etc.). */
@@ -49,9 +51,27 @@ export interface RadarEvent {
   readonly latencyPercentile?: number;
 }
 
+/**
+ * Path-dependent market REGIME (as opposed to an individual reaction EVENT), classified
+ * from a rolling window of recent RadarEvent signal classes. A single overreaction is an
+ * event; a market that's been persistently overreacting for the last 20 minutes is a
+ * different regime to size against — a real desk sizes to regime, not to the last signal.
+ * Deterministic, ts-windowed, no ML (radar/narrative.ts).
+ */
+export type NarrativeRegime =
+  | "compounding"  // dominated by stale-line/late-reaction: market is systematically slow
+  | "cautious"     // dominated by overreaction/favorite-panic: market is nervous, volatile
+  | "oscillating"  // alternates between the two: no stable price exists
+  | "neutral";     // insufficient data or no dominant pattern
+
 /** Emitted when unexplained-movement fires — consumed by risk as an adverse-selection HALT. */
 export interface HaltSignal {
-  readonly reason: "unexplained-movement" | "feed-gap" | "drawdown-kill" | "model-divergence";
+  readonly reason:
+    | "unexplained-movement"
+    | "informed-flow"
+    | "feed-gap"
+    | "drawdown-kill"
+    | "model-divergence";
   readonly marketKey?: MarketKey;
   readonly triggerMsgId: string;
   readonly ts: Millis;

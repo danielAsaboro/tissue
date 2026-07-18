@@ -1,6 +1,7 @@
 import type { Bps, MilliOdds, Millis, Units } from "./units.js";
 import type { MarketKey, Network, Selection } from "./markets.js";
-import type { RadarClass } from "./radar.js";
+import type { NarrativeRegime, RadarClass } from "./radar.js";
+import type { MatchPhase } from "./tissue.js";
 
 /**
  * Quote / intent surface + the hash-chained decision record (PRD §1.5, §7).
@@ -33,6 +34,10 @@ export interface Intent {
   /** True while any part of this intent's matching is simulated (current book_mode). */
   readonly simulated: boolean;
   readonly createdMsgId: string;
+  /** Feed ts of the message that (re)priced this intent — the "freshness clock" for
+   *  stale-quote decay (strategy/staleQuote.ts): how long has this exact resting price
+   *  sat unchallenged, from real already-tracked state, no fabrication. */
+  readonly createdTs: Millis;
   readonly txSig?: string;
 }
 
@@ -68,6 +73,10 @@ export interface StateSnapshot {
   readonly inventory: InventorySnapshot;
   readonly exposure: ExposureSnapshot;
   readonly feedGapMs: number;
+  readonly matchPhase: MatchPhase;
+  readonly stoppageActive: boolean;
+  readonly mutualDangerActive: boolean;
+  readonly narrativeRegime: NarrativeRegime;
 }
 
 /**
@@ -86,6 +95,11 @@ export interface DecisionRecord {
   readonly action: DecisionAction;
   readonly radarClass?: RadarClass;
   readonly haltReason?: string;
+  /** sha256 of the canonical policy object in effect for this decision — embedded directly
+   *  so a single record is self-contained proof of which policy produced it, without
+   *  cross-referencing the separate policy-snapshots audit log by timestamp. Same hash
+   *  config/policySnapshot.ts signs at boot. */
+  readonly policyHash: string;
   readonly state: StateSnapshot;
   /** Compact tissue vs market at decision time. */
   readonly tissueProb: Bps;
@@ -98,4 +112,8 @@ export interface DecisionRecord {
   readonly simulated: boolean;
   readonly prevHash: string;
   readonly hash: string;
+  /** Ed25519 signature over `hash` (hex) by `signerPubkey`, proving authorship — not just
+   *  internal chain consistency. Absent when no operator keypair is configured (e.g. CI). */
+  readonly signature?: string;
+  readonly signerPubkey?: string;
 }

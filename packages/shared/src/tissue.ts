@@ -6,6 +6,9 @@ import type { MarketKey, OddsVector, ProbVector } from "./markets.js";
  * (score, minute, reds, pressure) — independent of the market (PRD §1.1).
  */
 
+/** Which goal-scoring window the match is currently in (see apps/daemon tissue/inplay.ts). */
+export type MatchPhase = "regulation" | "extraTime" | "penalties";
+
 /** Solved scoring intensities for the remainder of the match (goals expected). */
 export interface Lambdas {
   /** ×1000 to stay integer-friendly in logs; math uses the float internally then rounds. */

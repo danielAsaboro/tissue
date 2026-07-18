@@ -23,6 +23,18 @@ max_goals_per_side = 10
 # In-play remaining-time scaling: lambda_rem = lambda_total * f(t_rem).
 # f is linear in remaining fraction by default (see tissue/inplay.ts). Regular-time minutes.
 match_regulation_minutes = 90
+# Extra time (ET1+ET2) minutes once a knockout tie enters extra time. ET goals still count
+# toward 1X2/totals resolution — phaseTotalMinutes expands to 90+this (tissue/inplay.ts).
+match_extra_time_minutes = 30
+
+[model.stoppage]
+# Discretionary added time at the end of a period (minute past the nominal 90/120 boundary
+# while the feed hasn't transitioned phase yet) is real, live playing time with an unknown
+# end — never priced as zero remaining. FLAGGED HEURISTIC (same honesty framing as
+# model.pressure): stoppage-time goal probability runs elevated versus mid-period play, a
+# modeling assumption, not a fitted/validated fact. Bounded and policy-controlled.
+min_fraction = 0.03    # floor remaining-time fraction during stoppage instead of hard 0
+lambda_mult = 1.2      # bounded multiplier on remaining lambda during stoppage (clamped [1,3])
 
 [model.red_card]
 # Multiplicative adjustment to a side's remaining lambda when it goes a man down.
@@ -44,6 +56,16 @@ attack_weight = 0.2
 danger_weight = 0.5
 high_danger_weight = 1.0
 
+[model.mutual_danger]
+# When BOTH sides sustain a high decayed-pressure reading simultaneously (trailing team
+# pressing, leading team countering), the next-goal distribution is genuinely bimodal — a
+# quick goal or nothing, not the Poisson point estimate's smooth middle. FLAGGED HEURISTIC
+# (same honesty framing as model.pressure/model.stoppage): a modeling assumption about
+# in-play soccer variance, not a fitted fact. Handled as a strategy-layer spread/size
+# overlay (reservation.ts), not a change to the Poisson lambda itself.
+pressure_threshold = 0.6   # both home/away decayed pressure scalars must clear this
+min_duration_ms = 45000    # sustained simultaneously for this long before it activates
+
 [strategy]
 # Quote only when |edge| = |tissue_p - market_p| >= this threshold (de-vigged, bps).
 edge_threshold_bps = 150
@@ -52,6 +74,13 @@ base_spread_bps = 80
 # Spread floor scales with feed staleness (adverse selection on the 60s tier, PRD §5).
 # Extra half-spread added per second of feed staleness beyond fresh.
 stale_spread_bps_per_sec = 25
+# Stoppage-time regime (model.stoppage): the desk keeps quoting through added time but
+# widens because per-minute variance is elevated and the clock's true end is unknown.
+stoppage_spread_mult = 1.3
+# Mutual-danger regime (model.mutual_danger): widen spread and cut size in the bimodal
+# both-sides-attacking window instead of trusting the Poisson point estimate's confidence.
+mutual_danger_spread_mult = 1.5
+mutual_danger_size_mult = 0.5
 # Avellaneda–Stoikov-adapted inventory skew: reservation price shifts against inventory.
 # gamma_inventory scales how hard we lean quotes to mean-revert inventory to zero.
 gamma_inventory = 0.08
@@ -64,9 +93,28 @@ max_quote_odds_milli = 15000  # ≤ 15.0 decimal (implied ≳ 6.7%)
 # Strategy conditions on Radar signal class (PRD §2 quote engine).
 aggressive_classes = ["stale-line", "late-reaction"]   # tighten / lean in
 widen_classes = ["overreaction", "favorite-panic"]     # widen spread
-halt_classes = ["unexplained-movement"]                # pull quotes (adverse selection)
+halt_classes = ["unexplained-movement", "informed-flow"]  # pull quotes (adverse selection)
 aggressive_spread_mult = 0.6   # multiply base spread when aggressive
 widen_spread_mult = 2.0        # multiply base spread when widening
+
+[strategy.narrative_conditioning]
+# Sizing by rolling market REGIME (radar/narrative.ts), layered on top of the per-event
+# radar_conditioning above: a persistently slow market earns compounded size (the desk has
+# the freshest model in the room); a persistently nervous one earns cut size and a wider
+# spread; an oscillating one — no stable price exists — gets minimum size only.
+compounding_size_mult = 1.3
+cautious_spread_mult = 1.4
+cautious_size_mult = 0.6
+oscillating_size_mult = 0.3
+
+[strategy.stale_quote]
+# Stale-quote decay (strategy/staleQuote.ts, adapted "Dead Intent Decay"): the age of
+# TISSUE'S OWN posted-but-unmatched quote, not an external orderbook (the sponsor's devnet
+# program has none — D-001). The longer the desk's current resting price has sat
+# unchallenged, the more it's been "tested" without disagreement — compress spread slightly,
+# bounded, so a fresh price isn't penalized and an old one doesn't compress without limit.
+decay_ms = 120_000        # time to reach full compression (2 minutes)
+min_spread_mult = 0.7     # floor multiplier — at most 30% tighter once fully decayed
 
 [sizing]
 # Capped fractional Kelly. size = kelly_fraction * full_kelly, clamped by caps below.
@@ -84,6 +132,22 @@ drawdown_kill_units = 3_000_000_000
 # Model-divergence sanity band: if |tissue_p - market_p| exceeds this, the model is
 # probably wrong about itself → pull + flag (protects against our own failure), bps.
 model_divergence_band_bps = 3500
+# Portfolio-level caps ACROSS every fixture the desk runs concurrently. One-fixture-focus
+# (markets.fixture_focus_mode) is the default scope, but the World Cup schedule stages
+# multiple knockout ties in parallel — a per-fixture-only cap multiplies uncapped total
+# capital at risk by however many fixtures happen to be live at once. Sized here for up to
+# ~3 concurrent fixtures; the operator-restart-only kill halts EVERY fixture once tripped,
+# not just the one whose loss caused it.
+portfolio_exposure_cap_units = 12_000_000_000
+portfolio_drawdown_kill_units = 7_000_000_000
+# Aggregate proof-failure-rate circuit breaker. A single failed TxLINE source proof already
+# blocks just that one message (fail-closed, existing behavior) — this catches the DIFFERENT
+# case where the proof service itself is systemically degraded: too many failures in a recent
+# window halts the whole desk rather than silently dropping message after message. Same
+# operator-restart-only latch semantics as the other kill switches.
+proof_failure_window = 20          # rolling window of the last N source-proof attempts
+proof_failure_min_samples = 8      # don't judge a rate until this many attempts have happened
+proof_failure_rate_halt = 0.5      # halt once >= 50% of the recent window failed
 
 [feed]
 # Feed-health gate. Gap beyond this between heartbeats/messages ⇒ HALT (cancel all, SAFE).
@@ -123,6 +187,27 @@ overreaction_retrace_pct = 50
 watch_after_minute = 75
 compression_bps = 150
 
+[radar.narrative]
+# Path-dependent market REGIME over a rolling window of recent Radar signal classes
+# (radar/narrative.ts), distinct from a single event's classification. A market that has
+# been persistently slow or persistently nervous for the last 20 minutes is a different
+# sizing decision than the last individual signal.
+window_ms = 1_200_000       # 20-minute rolling lookback
+dominance_fraction = 0.7    # one taxonomy side must hold >=70% of in-window samples
+min_samples = 3             # below this, classify "neutral" — insufficient data
+
+[radar.informed_flow]
+# Consensus-based informed-flow signal (radar/informedFlow.ts), adapted from Glosten-Milgrom
+# (1985): widen/withdraw against informed order flow. HONESTY NOTE: the original idea used
+# cross-bookmaker propagation timing, which TxLINE's real feed does not expose (single
+# de-margined StablePrice consensus — GROUND-TRUTH.md T2). This is the single-stream honest
+# version: classify a move's VELOCITY (bps/sec) against THIS market's own recent velocity
+# distribution instead of one fixed magnitude threshold for every market at every point.
+enabled = true                     # flagged heuristic on/off switch (same discipline as model.pressure)
+toxic_percentile = 90              # velocity above this percentile of trailing samples is anomalous
+min_samples = 8                    # below this, fall back to the seed threshold
+seed_velocity_bps_per_sec = 40     # fallback threshold (bps/sec) before enough samples exist
+
 [exec]
 # EXECUTION MODEL (see GROUND-TRUTH.md, feedback.md): the sponsor devnet program has
 # NO intent-book. Live mode publishes risk-approved quotes through the daemon API and
@@ -136,6 +221,16 @@ priority_fee_ladder_microlamports = [0, 1000, 10000, 50000]
 tx_max_retries = 3
 # Fraction of decisions whose inputs get anchored on-chain via validate_odds (sampling).
 anchor_sample_rate = 1.0
+# Anchor a checkpoint of the ledger head hash (SPL Memo, same technique as the pre-match
+# commitment) every N decisions through the match. 0 disables. The head hash already commits
+# to the whole prefix (linkHash folds every prior record), so this is continuous on-chain
+# evidence throughout the match, not just a single pre-kickoff snapshot.
+checkpoint_interval_decisions = 20
+# Wallet balance watchdog: anchoring/commit transactions fail for lack of funds without any
+# other visible symptom until they're attempted — surfaced proactively on /health and
+# /metrics instead of discovered only when a real anchoring transaction fails.
+wallet_balance_check_interval_ms = 300_000   # 5 minutes
+wallet_low_balance_lamports = 5_000_000      # ~0.005 SOL — a handful of anchoring txs left
 
 [grader]
 # CLV graded whether matched or not (fill-independence, PRD §1.4). Closing line = last
