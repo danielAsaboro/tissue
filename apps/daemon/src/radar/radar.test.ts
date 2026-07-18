@@ -1,7 +1,9 @@
 import { describe, expect, it, beforeAll } from "vitest";
+import { type OddsMessage, type ProbVector, bps as toBps, millis } from "@tissue/shared";
 import { loadPolicy, type Policy } from "../config/policy.js";
 import { percentile, percentileOf, computeBand } from "./percentiles.js";
 import { runRadar } from "./index.js";
+import { Radar } from "./radar.js";
 import { generateSyntheticCorpus } from "../ingest/synthetic.js";
 
 let policy: Policy;
@@ -71,5 +73,67 @@ describe("Radar on the synthetic corpus", () => {
     const withLatency = events.filter((e) => e.reactionLatencyMs !== undefined);
     expect(withLatency.length).toBeGreaterThanOrEqual(1);
     for (const e of withLatency) expect(e.reactionLatencyMs!).toBeGreaterThanOrEqual(0);
+  });
+});
+
+function odds(ts: number, home: number, away: number): OddsMessage {
+  return {
+    kind: "odds",
+    msgId: `o-${ts}`,
+    fixtureId: "F",
+    ts: millis(ts),
+    network: "devnet",
+    marketKey: { market: "1X2" },
+    consensus: { HOME: toBps(home), DRAW: toBps(10000 - home - away), AWAY: toBps(away) } as ProbVector,
+    inRunning: true,
+  };
+}
+
+describe("Radar — consensus-based informed-flow (single-stream velocity check)", () => {
+  it("fires informed-flow on a sudden move that's anomalous vs the market's own calm trailing velocity", () => {
+    const radar = new Radar(policy);
+    let ts = 0;
+    // Establish a calm trailing velocity distribution: small, steady 1-second steps.
+    let home = 5000;
+    for (let i = 0; i < 10; i++) {
+      ts += 1000;
+      home += i % 2 === 0 ? 5 : -5;
+      radar.observe(odds(ts, home, 3000));
+    }
+    // A sudden large, fast move with no preceding score event.
+    ts += 1000;
+    const out = radar.observe(odds(ts, home + 500, 3000));
+
+    expect(out.events.some((e) => e.signalClass === "informed-flow")).toBe(true);
+    expect(out.halts.some((h) => h.reason === "informed-flow")).toBe(true);
+  });
+
+  it("does not fire informed-flow when velocity stays within the market's own calm range", () => {
+    const radar = new Radar(policy);
+    let ts = 0;
+    let home = 5000;
+    let sawInformedFlow = false;
+    for (let i = 0; i < 20; i++) {
+      ts += 1000;
+      home += i % 2 === 0 ? 5 : -5;
+      const out = radar.observe(odds(ts, home, 3000));
+      if (out.events.some((e) => e.signalClass === "informed-flow")) sawInformedFlow = true;
+    }
+    expect(sawInformedFlow).toBe(false);
+  });
+
+  it("risk gates treat informed-flow the same as unexplained-movement: a per-market halt", () => {
+    const radar = new Radar(policy);
+    let ts = 0;
+    let home = 5000;
+    for (let i = 0; i < 10; i++) {
+      ts += 1000;
+      home += i % 2 === 0 ? 5 : -5;
+      radar.observe(odds(ts, home, 3000));
+    }
+    ts += 1000;
+    const out = radar.observe(odds(ts, home + 500, 3000));
+    const halt = out.halts.find((h) => h.reason === "informed-flow");
+    expect(halt?.marketKey).toEqual({ market: "1X2" });
   });
 });

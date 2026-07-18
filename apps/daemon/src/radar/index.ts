@@ -4,6 +4,8 @@ import { Radar, type RadarOutput } from "./radar.js";
 
 export * from "./percentiles.js";
 export * from "./classify.js";
+export * from "./narrative.js";
+export * from "./informedFlow.js";
 export { Radar } from "./radar.js";
 export type { RadarOutput } from "./radar.js";
 

@@ -1,4 +1,4 @@
-import type { Intent, MarketKey, Selection, Side } from "@tissue/shared";
+import type { Intent, Millis, MarketKey, Selection, Side } from "@tissue/shared";
 import type { QuoteProposal } from "../strategy/strategy.js";
 
 /**
@@ -44,8 +44,8 @@ export interface SettlementResult {
 
 export interface ExecPort {
   readonly simulated: boolean;
-  postIntent(proposal: QuoteProposal, fixtureId: string, msgId: string): Intent;
-  replaceIntent(id: string, priceMilliOdds: number, sizeUnits: number): Intent | null;
+  postIntent(proposal: QuoteProposal, fixtureId: string, msgId: string, createdTs: Millis): Intent;
+  replaceIntent(id: string, priceMilliOdds: number, sizeUnits: number, atTs: Millis): Intent | null;
   cancelIntent(id: string): Intent | null;
   /** Submit an external (counterparty) intent; the solver matches it vs Tissue's own only. */
   submitExternal(ext: ExternalIntent): Fill[];

@@ -2,6 +2,7 @@ import {
   type Intent,
   type IntentStatus,
   type MarketKey,
+  type Millis,
   type Selection,
   type Side,
   marketKeyString,
@@ -35,7 +36,7 @@ export class SimulatedBook implements ExecPort {
     this.simulated = simulateMatching;
   }
 
-  postIntent(p: QuoteProposal, fixtureId: string, msgId: string): Intent {
+  postIntent(p: QuoteProposal, fixtureId: string, msgId: string, createdTs: Millis): Intent {
     const id = `${this.simulateMatching ? "SIM" : "QUOTE"}:${fixtureId}:${String(++this.seq).padStart(5, "0")}`;
     const intent: Intent = {
       id,
@@ -49,12 +50,13 @@ export class SimulatedBook implements ExecPort {
       status: "Posted",
       simulated: this.simulateMatching,
       createdMsgId: msgId,
+      createdTs,
     };
     this.intents.set(id, intent);
     return intent;
   }
 
-  replaceIntent(id: string, priceMilliOdds: number, sizeUnits: number): Intent | null {
+  replaceIntent(id: string, priceMilliOdds: number, sizeUnits: number, atTs: Millis): Intent | null {
     const cur = this.intents.get(id);
     if (!cur || cur.status === "Settled" || cur.status === "Cancelled") return null;
     const next: Intent = {
@@ -63,6 +65,8 @@ export class SimulatedBook implements ExecPort {
       sizeUnits: units(sizeUnits),
       // residual re-quote: keep filledUnits; status reflects remaining size
       status: cur.filledUnits > 0 ? "PartiallyMatched" : "Posted",
+      // A repriced quote is a fresh price — reset the staleness clock (strategy/staleQuote.ts).
+      createdTs: atTs,
     };
     this.intents.set(id, next);
     return next;
@@ -147,13 +151,19 @@ export class SimulatedBook implements ExecPort {
     const perIntentPnlUnits: Record<string, number> = {};
     let total = 0;
     for (const f of this.fills) {
-      const won = selectionOccurred(f.selection, f.marketKey, homeScore, awayScore);
-      const decimal = f.priceMilliOdds / 1000;
+      const outcome = selectionOutcome(f.selection, f.marketKey, homeScore, awayScore);
       let pnl: number;
-      if (f.tissueSide === "BACK") {
-        pnl = won ? Math.round(f.sizeUnits * (decimal - 1)) : -f.sizeUnits;
+      if (outcome === "PUSH") {
+        // Total lands exactly on the line: stake refunded, no profit or loss for either side.
+        pnl = 0;
       } else {
-        pnl = won ? -Math.round(f.sizeUnits * (decimal - 1)) : f.sizeUnits;
+        const won = outcome === "WON";
+        const decimal = f.priceMilliOdds / 1000;
+        if (f.tissueSide === "BACK") {
+          pnl = won ? Math.round(f.sizeUnits * (decimal - 1)) : -f.sizeUnits;
+        } else {
+          pnl = won ? -Math.round(f.sizeUnits * (decimal - 1)) : f.sizeUnits;
+        }
       }
       perIntentPnlUnits[f.tissueIntentId] = (perIntentPnlUnits[f.tissueIntentId] ?? 0) + pnl;
       total += pnl;
@@ -179,18 +189,26 @@ function makerPriority(side: Side, odds: number): number {
   return side === "BACK" ? -odds : odds;
 }
 
-function selectionOccurred(
+export type SelectionOutcome = "WON" | "LOST" | "PUSH";
+
+/**
+ * 1X2 always resolves WON/LOST (no push). TOTALS pushes when the final total lands exactly
+ * on the line — an integer line (e.g. O/U 2.0) is reachable by a real scoreline, so this is
+ * not a theoretical edge case. A push refunds the stake on both BACK and LAY (settle()).
+ */
+function selectionOutcome(
   selection: Selection,
   marketKey: MarketKey,
   homeScore: number,
   awayScore: number,
-): boolean {
+): SelectionOutcome {
   if (marketKey.market === "1X2") {
-    if (selection === "HOME") return homeScore > awayScore;
-    if (selection === "AWAY") return awayScore > homeScore;
-    return homeScore === awayScore; // DRAW
+    if (selection === "HOME") return homeScore > awayScore ? "WON" : "LOST";
+    if (selection === "AWAY") return awayScore > homeScore ? "WON" : "LOST";
+    return homeScore === awayScore ? "WON" : "LOST"; // DRAW
   }
   const line = (marketKey.lineTimes10 ?? 25) / 10;
   const total = homeScore + awayScore;
-  return selection === "OVER" ? total > line : total < line;
+  if (total === line) return "PUSH";
+  return selection === "OVER" ? (total > line ? "WON" : "LOST") : (total < line ? "WON" : "LOST");
 }

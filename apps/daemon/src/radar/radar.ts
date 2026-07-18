@@ -13,6 +13,7 @@ import {
 import type { Policy } from "../config/policy.js";
 import { type LatencyBand, computeBand } from "./percentiles.js";
 import { type ClassifyConfig, type ReactionSummary, classifyReaction } from "./classify.js";
+import { type InformedFlowConfig, isInformedFlowVelocity, moveVelocityBpsPerSec } from "./informedFlow.js";
 
 /**
  * Latency Radar engine (PRD §1.2). Consumes the ordered feed, keys market reactions to
@@ -39,6 +40,10 @@ interface MarketState {
   baseline: Record<string, number> | null;
   latest: Record<string, number> | null;
   reaction: ReactionCtx | null;
+  /** For the informed-flow velocity check (informedFlow.ts): last odds ts + this market's
+   *  own trailing velocity distribution (bps/sec, bounded window). */
+  lastOddsTs: number | null;
+  velocitySamples: number[];
 }
 
 export interface RadarOutput {
@@ -53,6 +58,7 @@ export class Radar {
   private readonly out: RadarOutput = { events: [], halts: [] };
 
   private readonly cfg: ClassifyConfig;
+  private readonly informedFlowCfg: InformedFlowConfig;
   constructor(private readonly policy: Policy) {
     this.cfg = {
       significantBps: policy.radar.significant_reaction_bps,
@@ -60,6 +66,11 @@ export class Radar {
       drawWatchAfterMinute: policy.radar.draw_compression.watch_after_minute,
       drawCompressionBps: policy.radar.draw_compression.compression_bps,
       favoritePanicBps: policy.radar.significant_reaction_bps * 2,
+    };
+    this.informedFlowCfg = {
+      toxicPercentile: policy.radar.informed_flow.toxic_percentile,
+      minSamples: policy.radar.informed_flow.min_samples,
+      seedVelocityBpsPerSec: policy.radar.informed_flow.seed_velocity_bps_per_sec,
     };
   }
 
@@ -88,7 +99,7 @@ export class Radar {
   private state(key: string): MarketState {
     let st = this.markets.get(key);
     if (!st) {
-      st = { baseline: null, latest: null, reaction: null };
+      st = { baseline: null, latest: null, reaction: null, lastOddsTs: null, velocitySamples: [] };
       this.markets.set(key, st);
     }
     return st;
@@ -134,7 +145,10 @@ export class Radar {
     const key = marketKeyString(msg.marketKey);
     const st = this.state(key);
     const probs = toNumberMap(msg.consensus);
+    const previousProbs = st.latest;
+    const previousTs = st.lastOddsTs;
     st.latest = probs;
+    st.lastOddsTs = msg.ts;
     if (!st.baseline) {
       st.baseline = { ...probs };
       return;
@@ -162,6 +176,23 @@ export class Radar {
 
     // Measure against the current baseline (post-finalize if a reaction just closed).
     const magVsBaseline = magnitude(st.baseline, probs);
+
+    // Consensus-based informed-flow (informedFlow.ts): this market's own move VELOCITY
+    // against its own recent distribution — self-calibrating per market/regime, so it can
+    // catch a sudden move BEFORE the fixed unexplained_bps magnitude threshold below would,
+    // on a market whose typical volatility is lower than the fleet-wide fixed threshold.
+    if (this.policy.radar.informed_flow.enabled && previousProbs && previousTs !== null) {
+      const stepMagBps = magnitude(previousProbs, probs);
+      const velocity = moveVelocityBpsPerSec(stepMagBps, msg.ts - previousTs);
+      const toxic = isInformedFlowVelocity(velocity, st.velocitySamples, this.informedFlowCfg);
+      st.velocitySamples.push(velocity);
+      if (st.velocitySamples.length > 200) st.velocitySamples.shift(); // bounded trailing window
+      if (toxic) {
+        this.emitInformedFlow(msg, key, velocity, magVsBaseline);
+        st.baseline = { ...probs };
+        return;
+      }
+    }
 
     // No open reaction: a LARGE move with no recent event is unexplained (adverse
     // selection). Uses a higher threshold than reaction-significance so ordinary drift
@@ -243,6 +274,23 @@ export class Radar {
       triggerMsgId: msg.msgId,
       ts: msg.ts,
       detail: `unexplained ${Math.round(magBps)}bps move on ${key} with no event in ${this.policy.radar.unexplained_window_ms}ms`,
+    });
+  }
+
+  private emitInformedFlow(msg: OddsMessage, key: string, velocityBpsPerSec: number, magBps: number): void {
+    this.out.events.push({
+      marketKey: msg.marketKey,
+      triggerEvent: { kind: "none", msgId: msg.msgId, ts: msg.ts, minute: this.lastScore?.minute ?? 0 },
+      eventTs: msg.ts,
+      magnitudeBps: bps(Math.round(magBps)),
+      signalClass: "informed-flow",
+    });
+    this.out.halts.push({
+      reason: "informed-flow",
+      marketKey: msg.marketKey,
+      triggerMsgId: msg.msgId,
+      ts: msg.ts,
+      detail: `anomalous move velocity ${velocityBpsPerSec.toFixed(1)}bps/sec on ${key} vs its own trailing distribution`,
     });
   }
 
