@@ -1,0 +1,118 @@
+---
+title: "Architecture"
+description: "How a TxLINE message becomes a signed, anchored decision."
+---
+
+## System overview
+
+Tissue is a TypeScript pnpm monorepo with three runtime services and two shared
+libraries:
+
+| Component | Role |
+|---|---|
+| `apps/daemon` | The decision engine, risk gates, ledger, on-chain anchoring, and HTTP/SSE API |
+| `apps/dashboard` | Next.js App Router UI — reads the daemon's evidence API, never the ledger directly |
+| `apps/analyst` | Read-only LLM forensics layer over the ledger, isolated from decisioning |
+| `packages/shared` | Shared types: markets, decisions, radar signal classes, units |
+| `packages/slip` | Client for the sponsor's Slip settlement SDK (used by the analyst layer only) |
+
+## The decision pipeline
+
+Every feed message passes through the same ordered pipeline, live or in replay:
+
+```
+TxLINE SSE message
+      │
+      ▼
+Source proof verification (validate_odds / validate_stat on-chain CPI)
+      │  fails → message rejected, never admitted
+      ▼
+Match state update (score, minute, cards, phase, stoppage, mutual-danger, narrative)
+      │
+      ▼
+Tissue fair-value repricing (Poisson + Dixon-Coles, fixed-point bps)
+      │
+      ▼
+Radar classification (signal class: e.g. late-reaction, informed-flow)
+      │
+      ▼
+Risk gates (the ONLY module authorized to green-light execution)
+      │  halt conditions → HALT, no quote
+      ▼
+Strategy: edge check, quote bounds, inventory skew, Kelly sizing, exposure caps
+      │
+      ▼
+Decision record: hashed, Ed25519-signed, appended to the ledger
+      │
+      ▼
+Durable append (JSONL) + periodic checkpoint anchoring (Solana, SPL Memo)
+```
+
+Nothing skips a step. A message that fails source-proof verification never reaches
+match state, never gets priced, and never produces a decision — it's rejected outright
+and logged as a proof failure.
+
+## Async ingestion
+
+The daemon consumes two independent TxLINE SSE streams concurrently: `/api/scores/stream`
+and `/api/odds/stream`. Each stream:
+
+- Reconnects automatically with `Last-Event-ID` on disconnect
+- Renews its guest JWT transparently on expiry
+- Tracks feed-gap duration independently per stream
+- Detects and records cross-stream clock skew rather than silently clamping timestamps
+  to "fresh"
+
+Every admitted message is verified against TxLINE's Merkle proof endpoints
+(`/api/odds/validation`, `/api/scores/stat-validation`) and checked on-chain via the
+`validate_odds` / `validate_stat` program calls before it can influence a decision. If
+the recent proof-failure rate crosses a configured threshold, an aggregate circuit
+breaker halts the desk entirely — distinct from a single message being rejected, which
+never stops the desk on its own.
+
+## The Strategy Arena (A/B comparison)
+
+The Arena runs the **same ordered feed** through the **same deterministic engine**
+twice:
+
+- **Tissue** — every regime enabled
+- **Baseline** — every flagged heuristic regime neutralized to a no-op (correctness
+  fixes, like the stoppage-time lambda floor, stay on for both — that's a bug fix, not
+  an opinion)
+
+Both sides hash-chain independently and are graded by the same CLV/Brier grader. The
+comparison is a real, computed head-to-head, not an assertion. A **regime ablation
+matrix** extends this further: each of the five regimes is isolated individually
+against the same neutralized baseline, so you can see which regime is actually earning
+its keep rather than only the bundled effect.
+
+## Network consistency
+
+TxLINE exposes both devnet and mainnet feeds. Tissue's pricing input can come from
+either network, but on-chain execution and anchoring must always match the network of
+the configured Solana keypair — pricing on mainnet data while anchoring proofs on
+devnet (or vice versa) is treated as a configuration error, not a silent fallback.
+
+## Testing strategy
+
+Every layer of the pipeline above has a corresponding real test, not a mocked
+substitute for the unit under test. The ingest and analyst layers specifically have
+adversarial suites that feed deliberately malformed or hostile input (corrupted feed
+values, tampered proof responses, prompt injection, spoofed tool calls) and assert the
+system fails closed rather than silently misbehaving — this is how two real bugs were
+found and fixed during hardening (see the [Changelog](/feedback-roadmap#changelog)).
+On-chain anchoring is tested against a real local Solana validator (Surfpool), and two
+independent process-level chaos drills exercise crash/restart recovery and SSE
+disconnect/reconnect resilience as real OS processes against real TxLINE and Solana
+infrastructure. See [Deployment → Testing & verification](/deployment#testing-verification)
+for exact commands.
+
+## Dashboard and analyst isolation
+
+The dashboard never reads the ledger or SQLite database directly — it talks only to
+the daemon's read-only HTTP/SSE evidence API (`/state`, `/verify`, `/arena`,
+`/ledger/proof`, `/events`, ...). The analyst layer is stricter still: it opens its
+SQLite projection with `readOnly: true` at the connection level, has no write, post, or
+execute tool of any kind, and this isolation is a tested guarantee, not a convention —
+see [Verifiability](/verifiability) and [Core Concepts](/core-concepts) for why that
+boundary matters.

@@ -1,0 +1,108 @@
+---
+title: "Usage Examples & API"
+description: "Common flows: querying receipts, verifying proofs, running the Arena, and reading the dashboard."
+---
+
+## Query the daemon's live state
+
+```bash
+curl http://localhost:8788/state
+```
+
+Returns the full `DeskSnapshot`: status, active fixture, per-fixture decisions
+(last 200), quotes, radar events, anchor evidence, grade sheet, and portfolio risk.
+
+## Verify the hash chain
+
+```bash
+curl http://localhost:8788/verify
+```
+
+```json
+{ "ok": true, "fixtures": [{ "fixtureId": "18209181", "ok": true, "headHash": "…" }] }
+```
+
+## Request a Merkle inclusion proof for one decision
+
+```bash
+curl "http://localhost:8788/ledger/proof?fixtureId=18209181&seq=47"
+```
+
+See [Verifiability](/verifiability#merkle-inclusion-proofs) for how to verify the
+response locally.
+
+## Run the Strategy Arena on demand
+
+```bash
+curl "http://localhost:8788/arena?fixtureId=18209181"
+curl "http://localhost:8788/arena/ablation?fixtureId=18209181"
+```
+
+Both run on demand over the fixture's authoritative captured corpus — not a second
+continuously running live session.
+
+## Get a shareable grade card
+
+```bash
+curl "http://localhost:8788/grade-card.svg?fixtureId=18209181" -o grade-card.svg
+```
+
+## Check what policy was live, and when it changed
+
+```bash
+curl http://localhost:8788/policy/snapshots
+```
+
+## Run calibration/holdout evaluation
+
+```bash
+pnpm --filter @tissue/daemon evaluate:calibration
+```
+
+## Get human-reviewed tuning suggestions
+
+```bash
+pnpm --filter @tissue/daemon evaluate:tuning
+```
+
+Never writes `policy.toml` — see [Autonomous
+Operation](/autonomous-operation#the-honest-alternative-human-reviewed-tuning-suggestions).
+
+## Query the analyst layer
+
+The analyst exposes 8 read-only MCP tools. Example: find structurally similar past
+decisions to a reference decision.
+
+```typescript
+// via MCP client, tool: find_similar_decisions
+{
+  "fixture_id": "18209181",
+  "seq": 47,
+  "minute_tolerance": 10,
+  "edge_tolerance_bps": 100
+}
+```
+
+Every row returned is a real, citable ledger record — matched on radar class,
+match-minute proximity, and edge-magnitude proximity, not embeddings.
+
+## Dashboard walkthrough
+
+| Page | Shows |
+|---|---|
+| `/overview` | Desk status, live streams, portfolio risk |
+| `/decisions` | Decision feed with regime badges, hash-chain verify button, on-chain commitment timeline, TxLINE input verification list |
+| `/radar` | Signal-class legend and live latency-radar events |
+| `/quotes` | Quote tape with receipt links (decision hash, proof messageId, explorer URL) |
+| `/grade` | Grade sheet, shareable grade card, equity curve |
+| `/arena` | Strategy Arena head-to-head, regime ablation matrix |
+| `/analyst` | Read-only LLM forensics chat over the ledger |
+
+## Simulated execution disclaimer
+
+<Warning>
+Live mode publishes risk-approved quotes only. It never invents a fill, a counterparty,
+or PnL — there is no sponsor on-chain intent-book to fill against. Simulated fills
+exist only in replay/research mode and are always marked `simulated: true`, end to end,
+in the ledger, the API, and the dashboard.
+</Warning>

@@ -1,0 +1,90 @@
+---
+title: "Introduction"
+description: "Tissue is an autonomous in-play fair-value and quote-policy service for live football, verified end to end on TxLINE and Solana."
+---
+
+## What Tissue is
+
+Tissue prices live football matches from first principles and refuses to trade on
+information it doesn't have.
+
+It never chases the market. Instead, it freezes a pre-match fair-value model from
+TxLINE's opening consensus odds, then reprices continuously as the match unfolds —
+using verified score state, match minute, red cards, and match-phase context. When its
+own fair value diverges from TxLINE's live market price by more than a configured
+threshold, it publishes a two-sided quote. When the market moves in a way its own
+model can't explain, it pulls its quotes and halts rather than guess.
+
+Every one of those decisions is hash-chained, Ed25519-signed, and replayable byte for
+byte. The desk's opening priced markets are anchored on Solana before kickoff, and its
+ledger is anchored again at intervals through the match — so nothing about what Tissue
+believed, and when, has to be taken on trust.
+
+## Why independent pricing matters
+
+Most in-play trading tools are reactive: they watch a market move and try to react
+faster than someone else. That's a latency race, not an edge, and it has nothing to do
+with whether the market's new price is actually *right*.
+
+Tissue does the opposite. It computes what a Poisson/Dixon-Coles goals model — built
+from verified score state and match time, not from copying the market — believes the
+match is worth *right now*, independent of where the market currently sits. The gap
+between those two numbers is the only thing that triggers a quote. If there's no gap,
+there's no trade, and that's treated as a correct outcome, not a missed opportunity.
+
+<Tip>
+This is the same discipline a real market maker pays for: never quote against
+information you don't have. Tissue's "unexplained movement" halt (see
+[Discipline Engine](/core-concepts#the-discipline-engine)) exists specifically to
+enforce it mechanically, not just as a design intention.
+</Tip>
+
+## What's actually verifiable, today
+
+- **Deterministic replay.** `replay(corpus) === ledger` is asserted in CI on every
+  build — the exact same feed always produces the exact same hash chain.
+- **Ed25519-signed decisions.** Every ledger record is signed with the operator's real
+  Solana keypair. Anyone with the public key can verify authorship independent of
+  trusting the process that produced the JSONL file.
+- **Merkle inclusion proofs.** Any past decision can produce an O(log n) proof that
+  it's included in a specific on-chain-anchored root — not just "trust the whole file."
+- **Real on-chain anchoring.** The desk's pre-kickoff fair-value snapshot, and periodic
+  checkpoints through the match, are anchored via real, confirmed Solana transactions.
+- **Verified source proofs.** Every score and odds message is checked against TxLINE's
+  Merkle proof endpoints and validated on-chain before it's allowed to influence a
+  decision. A message that fails verification is never admitted.
+- **A/B proof, not assertion.** The Strategy Arena runs the same feed through the same
+  deterministic engine twice — once with every heuristic regime enabled, once fully
+  neutralized — and grades both with the same CLV/Brier grader. The regime-ablation
+  matrix goes further and isolates each regime individually.
+
+## What Tissue does not claim
+
+To keep this documentation honest: Tissue does not execute real trades. TxLINE's
+current on-chain program has no intent-book or order-matching instruction, so live
+mode publishes risk-approved quotes and never invents a fill, a counterparty, or PnL.
+Simulated fills exist only in replay/research mode and are always labeled `simulated`.
+See [Limitations](/faq#limitations) for the full list of what depends on TxLINE
+capabilities that don't exist yet.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run the desk against a real devnet fixture in a few commands.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    See how a TxLINE message becomes a signed, anchored decision.
+  </Card>
+  <Card title="Core Concepts" icon="scale-balanced" href="/core-concepts">
+    Fair value, the five regimes, and the discipline engine.
+  </Card>
+  <Card title="Verifiability" icon="link" href="/verifiability">
+    How to independently check any decision Tissue has made.
+  </Card>
+</CardGroup>
+
+<Info>
+Demo video, GitHub repository, and live dashboard links are withheld while the project
+is under competition embargo. They will be added here once publication is authorized.
+</Info>

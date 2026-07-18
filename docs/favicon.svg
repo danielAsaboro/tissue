@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+<title id="title">TISSUE gauge logo</title>
+<defs><clipPath id="dialClip"><circle cx="256" cy="238" r="176"/></clipPath></defs>
+<circle cx="256" cy="238" r="188" fill="#F2F0EB" stroke="#303536" stroke-width="24"/>
+<g clip-path="url(#dialClip)"><rect x="80" y="238" width="352" height="176" fill="#303536"/></g>
+<path d="M94 238 H418" stroke="#303536" stroke-width="12"/>
+<path d="M256 238 L345 112" stroke="#D96B32" stroke-width="18" stroke-linecap="round"/>
+<circle cx="256" cy="238" r="28" fill="#F2F0EB" stroke="#303536" stroke-width="16"/>
+<path d="M256 54 V82 M140 88 L158 110 M372 88 L354 110" stroke="#303536" stroke-width="10" stroke-linecap="round"/>
+</svg>

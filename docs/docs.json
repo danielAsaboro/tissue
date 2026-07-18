@@ -1,0 +1,51 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Tissue",
+  "colors": {
+    "primary": "#0F172A",
+    "light": "#38BDF8",
+    "dark": "#0F172A"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart", "architecture"]
+          },
+          {
+            "group": "How It Works",
+            "pages": ["core-concepts", "verifiability", "autonomous-operation"]
+          },
+          {
+            "group": "Build & Run",
+            "pages": ["features", "deployment", "usage-examples"]
+          },
+          {
+            "group": "Reference",
+            "pages": ["reference", "faq", "feedback-roadmap"]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      { "label": "GitHub", "href": "https://github.com/PLACEHOLDER/tissue" }
+    ],
+    "primary": { "type": "button", "label": "Live Dashboard", "href": "https://PLACEHOLDER" }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/PLACEHOLDER/tissue"
+    }
+  }
+}

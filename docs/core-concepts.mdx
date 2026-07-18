@@ -1,0 +1,87 @@
+---
+title: "Core Concepts"
+description: "Fair value, the five regimes, and the discipline that keeps Tissue from chasing the market."
+---
+
+## The fair-value model
+
+Tissue prices a match in two phases:
+
+1. **Freeze.** At kickoff, TxLINE's opening de-vigged consensus odds set the base
+   scoring intensities for both teams. The free totals-only feed uses a neutral team
+   split; when 1X2 odds are also present, they solve the relative scoring share.
+2. **Reprice.** As the match progresses, Tissue reprices the remainder of the match
+   using a Poisson goals model with Dixon-Coles low-score dependence, conditioned on
+   verified current score, remaining playing time, and red cards.
+
+This fair value is compared against TxLINE's live StablePrice consensus. When the two
+diverge by more than `strategy.edge_threshold_bps` (after de-vigging), and every risk
+gate clears, Tissue publishes a two-sided quote.
+
+<Note>
+TxLINE's StablePrice is a single de-margined consensus stream, not per-bookmaker odds.
+This was verified directly against captured real data and TxLINE's current live docs —
+it shapes what kind of adverse-selection signal is honestly possible (see
+[Informed-Flow](#informed-flow), below).
+</Note>
+
+## The five regimes
+
+Each regime is a flagged, individually toggleable heuristic addressing one specific
+real-world trading question. All five are neutralized in the Strategy Arena's Baseline
+agent and can be isolated individually via the regime ablation matrix.
+
+| Regime | Trading question it answers | Effect |
+|---|---|---|
+| **Stoppage-time** | How should added time be priced? | Real playing time gets a bounded lambda floor instead of zeroing goal probability at minute 90 — a genuine bug fix that also functions as a regime |
+| **Mutual-danger** | How should sustained two-way pressure be priced? | Sustained simultaneous high-pressure events (not a single spike) widen spread and cut size — the next-goal distribution is bimodal here, not the Poisson point estimate's confident middle |
+| **Narrative regime** | Is the market's recent behavior itself informative? | A rolling window of the Radar's own signal-class history classifies the market as neutral, cautious, compounding, or oscillating, and sizing conditions on that regime, not just the most recent signal |
+| **Informed-flow** | Is this price move unusually sharp for this market right now? | A Glosten-Milgrom-style adverse-selection check adapted to what TxLINE actually exposes: it classifies a move's *velocity* against that market's own trailing distribution, since there is no cross-bookmaker propagation data to compare against |
+| **Stale-quote decay** | Should an unchallenged resting quote get tighter over time? | The age of Tissue's *own* resting quote (real, already-tracked state) compresses spread as it sits unchallenged |
+
+## The discipline engine
+
+Risk gates are the **only** module authorized to green-light execution. They check, in
+order:
+
+- **Feed-gap halt** — the feed went quiet longer than tolerance; every open intent is
+  cancelled
+- **Unexplained-movement halt** — odds moved with no feed cause Tissue can see
+- **Informed-flow halt** — this market's move velocity is anomalous against its own
+  trailing distribution
+- **Model-divergence band** — Tissue's own price disagrees with the market by more
+  than a sanity band allows (protects against Tissue's own model failure, not the
+  market's)
+- **Drawdown kill** — realized drawdown crosses a threshold; operator-restart-only,
+  never auto-resumes
+- **Portfolio-level caps** — the same exposure and drawdown checks, aggregated across
+  every fixture the desk is concurrently running (the World Cup schedule stages
+  multiple knockout ties in parallel; a per-fixture-only cap would multiply uncapped
+  total risk by fixture count)
+- **Proof-failure-rate circuit breaker** — an aggregate check distinct from a single
+  rejected message: if the *rate* of recent source-proof failures crosses a threshold,
+  the whole desk halts, because that signals a degraded proof service, not one bad
+  message
+
+<Warning>
+Unexplained-movement and informed-flow are the two halts that exist specifically
+*because* the market moved. Tissue's rule is simple and mechanical: it will not quote
+against information it doesn't have, even when doing so looks like leaving edge on the
+table.
+</Warning>
+
+## Network consistency
+
+See [Architecture → Network consistency](/architecture#network-consistency).
+
+## Signed decisions and receipts
+
+Every decision record carries:
+
+- A **hash** linking it to every prior decision (`H(prevHash ‖ canonical(record))`)
+- An **Ed25519 signature** over that hash, from the same Solana keypair used for
+  on-chain anchoring
+- A **Merkle inclusion proof**, on request, against a specific anchored checkpoint root
+
+See [Verifiability & Audit Trail](/verifiability) for exactly how to check any of this
+independently.
