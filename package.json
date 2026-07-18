@@ -14,7 +14,7 @@
     "build:runtime:analyst": "node scripts/build-runtime.mjs analyst",
     "verify:runtime": "node scripts/verify-runtime.mjs",
     "verify:containers": "bash scripts/verify-containers.sh",
-    "test": "pnpm --filter @tissue/slip test:run && pnpm --filter @tissue/daemon test:run && pnpm --filter @tissue/analyst test:run",
+    "test": "pnpm --filter @tissue/slip test:run && pnpm --filter @tissue/daemon test:run && pnpm --filter @tissue/analyst test:run && pnpm --filter @tissue/dashboard test:run",
     "test:run": "pnpm --filter @tissue/daemon test:run",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint . --max-warnings 0",

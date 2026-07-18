@@ -3,6 +3,72 @@
 Living state doc. Updated at every phase boundary. If you are picking this repo up,
 read this top-to-bottom, then `GROUND-TRUTH.md`, then `internal/tissue-prd.md` (the spec).
 
+## 2026-07-18 Edge-case hardening + four novel pricing/risk regimes
+
+Closed real gaps found by an adversarial audit of the decision path, then shipped four new
+signals layered onto the existing pricing/strategy core. **All additive**: existing tests
+untouched, `replay(corpus) === ledger` still holds, 126 → 203 tests.
+
+Edge-case fixes:
+- ET/penalties pricing no longer zeroes remaining goal-scoring lambda at minute 90; added a
+  discretionary-stoppage-time regime (`model.stoppage`) that floors remaining-time fraction
+  instead of hard-zeroing and applies a bounded lambda boost (`tissue/inplay.ts`).
+- `exec/simulatedBook.ts` now settles a push (total lands exactly on an integer line) as a
+  stake refund instead of a loss for both BACK and LAY.
+- `config/policy.ts::validatePolicy` is now an exhaustive recursive shape-check against every
+  policy.toml field, not a handpicked 6-field subset — a missing field now fails loudly at
+  boot instead of silently disabling a risk gate via `NaN > x`. `risk/gates.ts` and
+  `config/policy.ts` went from zero test coverage to full coverage.
+- Added a portfolio-level exposure cap + drawdown kill across every concurrently running
+  fixture (`policy.risk.portfolio_*`, `EngineSession.kill()`, `runtime/liveDesk.ts`).
+- Cross-stream (scores/odds) clock skew is now detected and recorded (`EngineResult.clockSkewEvents`)
+  instead of silently clamped to "fresh."
+- `evaluate:real` gap closed with a genuine real mainnet corpus (fixture `17588302`) captured
+  via a new `apps/daemon/scripts/captureCorpus.ts`, reusing the daemon's own reviewed
+  config/credentials/snapshot boundary — no fabricated data.
+
+Four new signals (all policy-driven, all with dedicated tests):
+- **Mutual-danger regime** (`state/matchState.ts`, `model.mutual_danger`): sustained
+  simultaneous high-pressure on both sides widens spread and cuts size — the next-goal
+  distribution is bimodal there, not the Poisson point estimate's confident middle.
+- **Path-dependent narrative regime** (`radar/narrative.ts`, `radar.narrative`): a rolling
+  window of Radar signal classes classifies the market's persistent behavior (compounding /
+  cautious / oscillating), sized independently of the last single event.
+- **Consensus-based informed-flow signal** (`radar/informedFlow.ts`, `radar.informed_flow`):
+  the honest single-stream adaptation of a cross-book VPIN idea that TxLINE's real feed can't
+  support (StablePrice is one de-margined consensus, confirmed against current live docs, not
+  per-book lines) — classifies a move's velocity against the market's own trailing
+  distribution instead of one fixed magnitude threshold for every market.
+- **Stale-quote decay** (`strategy/staleQuote.ts`, `strategy.stale_quote`): the honest
+  adaptation of a "dead intent decay" idea that needs an external orderbook TxLINE doesn't
+  have (D-001) — tracks the age of Tissue's OWN resting quote and compresses spread as it
+  ages unchallenged.
+- **Pre-Match Hash Commitment ("Proof of Edge")** (`exec/preMatchCommit.ts`): hashes the
+  desk's first priced-markets snapshot, before any score message, and anchors it via a real
+  SPL Memo transaction (the sponsor program has no generic commitment instruction — this uses
+  Solana's standard timestamping primitive instead). Real confirmed devnet evidence: signature
+  `5vSVJU2QaGmBhEcyngA6fnzyToSBjLNnN1Vq4YutXR4JTkaPg2BUVpPoPutvwkmYgKbuKGcUetXeLytkgrHvvmsm`,
+  slot `477055999`. See `REMAINING.md`.
+- **Strategy Arena** (`apps/daemon/src/arena/`, sponsor's "Agent vs Agent Arena" idea):
+  the SAME feed through the SAME deterministic engine twice — Tissue (every regime
+  enabled) vs a neutralized Baseline (`baselinePolicy`, every flagged heuristic/regime
+  reduced to a no-op, correctness fixes like the stoppage zero-lambda fix left on for
+  both) — graded head-to-head with the same CLV/Brier grader. Reuses the existing
+  engine/ledger/grader entirely; no second unvalidated pricing model invented. Exposed
+  on-demand via daemon `GET /arena[?fixtureId=]` (computed fresh from the fixture's
+  authoritative corpus, not a second continuously-running live session) and on the
+  dashboard's new `/arena` page. Also printed by `pnpm run replay`.
+
+**UI parity closed (same day):** the four regimes above run on every live/replay decision
+and were recorded in the hash-chained ledger, but were invisible in the dashboard UI —
+closed: Radar page's signal-class legend now lists `informed-flow`; the Decision feed has a
+new "Regime" column rendering compact badges (ET/PEN phase, STOPPAGE, MUTUAL DANGER,
+narrative regime) only when non-default; `HaltBanner`'s explanatory copy is now
+reason-specific (`informed-flow`, `feed-gap`, `drawdown-kill`, `model-divergence`,
+`match-void`) instead of one generic "unexplained movement" paragraph covering every halt.
+Verified by rendering real + hand-built regime fixtures through the actual components in a
+real browser (screenshot-checked), not just typechecked.
+
 ## 2026-07-14 Slip SDK agent update
 
 - Tissue now installs the same packed `@slip/sdk@0.2.0` public contract as FullTime. The tarball
@@ -84,7 +150,8 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 
 ## TL;DR
 
-All product phases now have a real vertical slice. **126 tests are green**; lint and all packages
+All product phases now have a real vertical slice. **228 tests are green** (3 slip + 208 daemon
++ 17 analyst); lint and all packages
 typecheck; `replay(corpus) === ledger` is asserted in CI. The T1 gate failed because no
 on-chain intent-book exists and was resolved by decision **D-001**: live quote publication,
 real `validate_odds` verification, and matching simulation isolated to explicit replay.
