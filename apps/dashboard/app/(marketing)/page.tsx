@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Target, Radar, OctagonX, ShieldCheck } from "lucide-react";
 
 const SIGNAL_CLASSES = [
   "late-reaction",
@@ -14,17 +15,17 @@ const BUILT_ON = ["TxLINE", "Solana", "Poisson", "Dixon–Coles", "Hash ledger"]
 
 const FEATURES = [
   {
-    glyph: "📐",
+    icon: Target,
     title: "Own fair value",
     body: "Opening consensus becomes scoring rates. Verified score, clock, and cards evolve the price — not a copy of the last odds tick.",
   },
   {
-    glyph: "📡",
+    icon: Radar,
     title: "Latency Radar",
     body: "Every market reaction is classified against that price: late, fast, overreacting, stale, or unexplained.",
   },
   {
-    glyph: "🛑",
+    icon: OctagonX,
     title: "Halt discipline",
     body: "Unexplained movement pulls quotes. The desk refuses to trade against information it cannot see.",
   },
@@ -94,6 +95,25 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <section className="lp-section" style={{ paddingTop: 0, paddingBottom: "var(--spacing-32)" }}>
+        <div className="lp-note">
+          <p style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <ShieldCheck size={16} strokeWidth={2} aria-hidden style={{ flexShrink: 0, color: "var(--accent)" }} />
+            <span>
+              <strong>For judges.</strong> No login, no setup — everything below is live devnet
+              data or an explicit replay run.
+            </span>
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            <Link href="/overview" className="evidence-link">Open the live desk</Link>
+            {" · "}
+            <Link href="/verify" className="evidence-link">Verify a decision yourself</Link>
+            {" · "}
+            <Link href="/grade" className="evidence-link">Read the grade sheet</Link>
+          </p>
+        </div>
+      </section>
+
       <section id="why-tissue" className="lp-section">
         <p className="lp-kicker">Why Tissue</p>
         <h2 className="lp-h2">Signal bots flag. Desks price.</h2>
@@ -106,7 +126,7 @@ export default function LandingPage() {
           {FEATURES.map((f) => (
             <div key={f.title} className="lp-card">
               <div className="lp-dot" aria-hidden>
-                {f.glyph}
+                <f.icon size={20} strokeWidth={2} />
               </div>
               <h3>{f.title}</h3>
               <p>{f.body}</p>
