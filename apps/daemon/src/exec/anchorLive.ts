@@ -60,7 +60,7 @@ export interface ProofNodeResponse {
   readonly isRightSibling: boolean;
 }
 
-interface OddsProofResponse {
+export interface OddsProofResponse {
   readonly odds: Record<string, unknown>;
   readonly summary: {
     readonly fixtureId: number | string;
@@ -114,7 +114,7 @@ export function proofNodes(nodes: readonly ProofNodeResponse[]): { hash: number[
   });
 }
 
-function assertProofMatchesMessage(
+export function assertProofMatchesMessage(
   message: OddsMessage,
   proof: OddsProofResponse,
   network: Network,
@@ -148,7 +148,7 @@ function assertProofMatchesMessage(
   return proofMessage.ts;
 }
 
-function loadKeypair(path: string | undefined, required: boolean): Keypair {
+export function loadKeypair(path: string | undefined, required: boolean): Keypair {
   if (!path) {
     if (required) throw new Error("TISSUE_KEYPAIR_PATH is required for transaction anchoring");
     return Keypair.generate();
