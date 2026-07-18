@@ -8,6 +8,7 @@ import { runEngine } from "./engine.js";
 import { grade } from "../grader/grader.js";
 import { verifyChain } from "../ledger/ledger.js";
 import type { FeedMessage } from "@tissue/shared";
+import { runArena, summarizeArena } from "../arena/arena.js";
 
 /**
  * Replay lab (PRD §9). Reruns a corpus through the SAME engine the live daemon uses — so it
@@ -93,7 +94,16 @@ async function main(): Promise<void> {
   console.log(`  latency        ${g.latency.map((l) => `${l.market} p50=${l.p50Ms}ms`).join("  ") || "none"}`);
   console.log(`  PnL            ${g.pnl.realizedUnits} units  ·  matched ${g.pnl.matchedIntents}  ·  SIMULATED`);
   console.log(`  anchors        ${result.anchors.length} validate_odds PDAs prepared (devnet)`);
-  console.log(`  final score    ${result.finalScore.home}-${result.finalScore.away}\n`);
+  console.log(`  final score    ${result.finalScore.home}-${result.finalScore.away}`);
+
+  // Strategy Arena: the SAME feed through the SAME engine with every heuristic regime
+  // neutralized (baselinePolicy) — a real head-to-head, not an assertion.
+  const arena = runArena(corpus, policy);
+  const summary = summarizeArena(arena);
+  console.log("── strategy arena (Tissue vs neutralized baseline) ─────");
+  console.log(`  Tissue    CLV n=${summary.tissue.clvN}  mean ${summary.tissue.meanClvBps}bps   Brier ${summary.tissue.brier.toFixed(4)}`);
+  console.log(`  Baseline  CLV n=${summary.baseline.clvN}  mean ${summary.baseline.meanClvBps}bps   Brier ${summary.baseline.brier.toFixed(4)}`);
+  console.log(`  edge      CLV ${summary.clvEdgeBps >= 0 ? "+" : ""}${summary.clvEdgeBps}bps   Brier ${summary.brierEdge <= 0 ? "" : "+"}${summary.brierEdge.toFixed(4)} (lower is better)\n`);
 }
 
 function pad(n: number): string {

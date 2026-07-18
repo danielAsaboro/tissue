@@ -6,10 +6,17 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "activate:devnet": "tsx scripts/liveActivate.ts",
+    "capture:corpus": "tsx scripts/captureCorpus.ts",
+    "drill:restart": "node scripts/restartDrill.mjs",
+    "drill:streamdrop": "node scripts/streamDropDrill.mjs",
     "seed-replay-fixture": "tsx src/ingest/seedCorpus.ts",
     "replay": "tsx src/replay/replayCli.ts",
     "evaluate:real": "tsx src/evaluation/evaluateReal.ts",
+    "evaluate:calibration": "tsx src/evaluation/calibrationSplit.ts",
+    "evaluate:tuning": "tsx src/evaluation/tuningSuggestions.ts",
     "verify:score-source": "tsx scripts/verifyScoreSource.ts",
+    "surfpool:smoke": "tsx scripts/surfpoolSmoke.ts",
+    "test:surfpool": "SURFPOOL_RPC_URL=http://127.0.0.1:8899 vitest run src/exec/surfpoolAnchoring.test.ts --reporter=verbose",
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit"

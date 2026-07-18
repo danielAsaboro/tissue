@@ -2,6 +2,7 @@ import {
   type FeedMessage,
   type HaltSignal,
   type Intent,
+  type NarrativeRegime,
   type Network,
   type OddsMessage,
   type RadarClass,
@@ -12,17 +13,22 @@ import {
   bps,
 } from "@tissue/shared";
 import type { Policy } from "../config/policy.js";
+import { hashPolicy } from "../config/policySnapshot.js";
 import { hashPayload } from "../ledger/hash.js";
 import { Ledger } from "../ledger/ledger.js";
+import type { LedgerSigner } from "../ledger/signing.js";
 import { MatchState } from "../state/matchState.js";
 import { TissuePricer } from "../tissue/index.js";
+import type { TissueState } from "../tissue/price.js";
 import { Radar } from "../radar/radar.js";
+import { classifyNarrative } from "../radar/narrative.js";
 import { computeEdges, proposeQuotes, type QuoteProposal } from "../strategy/strategy.js";
 import { evaluateRisk } from "../risk/gates.js";
 import { ExposureTracker } from "../risk/exposure.js";
 import { SimulatedBook } from "../exec/simulatedBook.js";
 import { FeeLadder } from "../exec/feeLadder.js";
 import { prepareOddsAnchor, type PreparedAnchor } from "../exec/anchor.js";
+import { preparePreMatchCommitment, type PreMatchCommitment } from "../exec/preMatchCommit.js";
 
 /** Injected on-chain submission outcome per market — models devnet congestion / tx failure. */
 export type SubmitOutcome = "ok" | "congested" | "failed";
@@ -54,6 +60,10 @@ export interface EngineResult {
   readonly radarEvents: RadarEvent[];
   readonly halts: HaltSignal[];
   readonly anchors: PreparedAnchor[];
+  /** Deterministic "Proof of Edge" snapshot from the FIRST priced tick (pre-kickoff, before
+   *  any score message). Null until a pricer exists. Live on-chain submission is a separate
+   *  async step (exec/preMatchCommit.ts::submitPreMatchCommitment). */
+  readonly preMatchCommitment: PreMatchCommitment | null;
   readonly book: SimulatedBook;
   readonly quotes: QuoteRecord[];
   readonly forecasts: ForecastPoint[];
@@ -61,6 +71,24 @@ export interface EngineResult {
   /** True if the match was abandoned/cancelled — positions voided, not settled on score. */
   readonly voided: boolean;
   readonly closingMarket: Map<string, OddsMessage>;
+  /** Out-of-order arrivals across the merged scores+odds timeline (see ClockSkewEvent). */
+  readonly clockSkewEvents: ClockSkewEvent[];
+}
+
+/**
+ * Scores and odds are two independent SSE streams merged into one timeline by feed `ts`.
+ * If a lower-`ts` message from one stream arrives after a higher-`ts` message from the
+ * other, that is real clock skew or out-of-order delivery between the streams — a fact
+ * worth surfacing, not a "the feed is fresh" signal. `stalenessMs` still clamps the delta
+ * to 0 for spread-widening math (a negative half-spread makes no sense), but every skew
+ * event is recorded here so it stays observable instead of silently absorbed.
+ */
+export interface ClockSkewEvent {
+  readonly msgId: string;
+  readonly kind: FeedMessage["kind"];
+  readonly ts: number;
+  readonly prevTs: number;
+  readonly skewMs: number;
 }
 
 /** A tissue 1X2 forecast at one reprice — the input to Brier/calibration grading. */
@@ -99,6 +127,10 @@ export interface EngineOptions {
    * devnet-congestion branches without a real chain.
    */
   readonly submitFault?: (marketKey: string, msgId: string) => SubmitOutcome;
+  /** Ed25519-signs every ledger record when supplied (ledger/signing.ts). Undefined in
+   *  replay/CI/tests, where no operator keypair exists — signatures are additive evidence,
+   *  never required for the deterministic hash chain itself. */
+  readonly signer?: LedgerSigner;
 }
 
 export interface EngineSession {
@@ -108,6 +140,13 @@ export interface EngineSession {
   current(): EngineResult;
   /** Close trailing Radar windows and simulated settlement. No messages may follow. */
   finish(): EngineResult;
+  /**
+   * Latch this session killed from OUTSIDE its own per-fixture drawdown math — the
+   * portfolio-level risk aggregator (LiveDesk) uses this so a loss on one fixture halts
+   * every concurrently running fixture, not just the one that tripped it. Same latch
+   * semantics as the internal drawdown kill: operator-restart-only, never auto-resumes.
+   */
+  kill(): void;
 }
 
 export function createEngineSession(
@@ -117,7 +156,8 @@ export function createEngineSession(
 ): EngineSession {
   const feedGapHalt = opts.feedGapHalt ?? false;
   const simulateFills = opts.simulateFills ?? true;
-  const ledger = new Ledger();
+  const ledger = new Ledger(opts.signer);
+  const policyHash = hashPolicy(policy);
   const radar = new Radar(policy);
   const book = new SimulatedBook(simulateFills);
   const exposure = new ExposureTracker(policy.risk.exposure_cap_per_fixture_units);
@@ -126,12 +166,14 @@ export function createEngineSession(
   let prevTs: number | null = null;
 
   const radarEvents: RadarEvent[] = [];
+  const clockSkewEvents: ClockSkewEvent[] = [];
   const halts: HaltSignal[] = [];
   const anchors: PreparedAnchor[] = [];
   const quotes: QuoteRecord[] = [];
   const forecasts: ForecastPoint[] = [];
 
   let pricer: TissuePricer | null = null;
+  let preMatchCommitment: PreMatchCommitment | null = null;
   let killed = opts.initialKilled ?? false;
   let voided = false;
   let openingHome: OddsMessage | null = null;
@@ -151,13 +193,18 @@ export function createEngineSession(
     }
     // Inter-message staleness (data-driven, deterministic). Widens spreads always; only
     // hard-halts when feedGapHalt is enabled (live / chaos drill).
-    const stalenessMs = prevTs == null ? 0 : Math.max(0, msg.ts - prevTs);
-    prevTs = msg.ts;
+    const rawDelta = prevTs == null ? 0 : msg.ts - prevTs;
+    if (rawDelta < 0) {
+      clockSkewEvents.push({ msgId: msg.msgId, kind: msg.kind, ts: msg.ts, prevTs: prevTs!, skewMs: -rawDelta });
+    }
+    const stalenessMs = Math.max(0, rawDelta);
+    prevTs = prevTs == null ? msg.ts : Math.max(prevTs, msg.ts);
     const feedGapMs = feedGapHalt ? stalenessMs : 0;
     const rout = radar.observe(msg);
     radarEvents.push(...rout.events);
     halts.push(...rout.halts);
 
+    let justBuiltPricer = false;
     if (msg.kind === "score") {
       state.applyScore(msg);
       finalScore = { home: msg.homeScore, away: msg.awayScore };
@@ -168,10 +215,21 @@ export function createEngineSession(
       if (msg.marketKey.market === "TOTALS" && !openingTotals) openingTotals = msg;
       if (!pricer && (openingHome || openingTotals)) {
         pricer = buildPricer(openingHome, openingTotals, policy);
+        justBuiltPricer = true;
       }
       if (simulateFills) simulateExternalFlow(book, msg, exposure);
       if (shouldAnchor(policy, anchorTick++)) anchors.push(prepareOddsAnchor(network, msg.ts));
     }
+
+    // Computed unconditionally (before the void/no-pricer early returns) so every decision
+    // record — including HALT/NO_ACTION — carries a real, ts-driven phase/stoppage/pressure/
+    // narrative snapshot rather than a stale or fabricated one.
+    const tissueState = state.tissueState(msg.ts);
+    const narrativeRegime = classifyNarrative(radarEvents, msg.ts, {
+      windowMs: policy.radar.narrative.window_ms,
+      dominanceFraction: policy.radar.narrative.dominance_fraction,
+      minSamples: policy.radar.narrative.min_samples,
+    });
 
     // Abandoned/cancelled match ⇒ VOID: cancel all, stop quoting, do NOT settle on the score.
     if (voided) {
@@ -179,16 +237,21 @@ export function createEngineSession(
         const c = book.cancelIntent(i.id);
         if (c) exposure.upsertOpen(c);
       }
-      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "HALT", undefined, "match-void", bps(0), bps(0), 0, [], simulateFills);
+      appendRecord(ledger, msg, network, tissueState, narrativeRegime, exposure, stalenessMs, "HALT", undefined, "match-void", bps(0), bps(0), 0, [], simulateFills, policyHash);
       return current();
     }
 
     if (!pricer) {
-      appendRecord(ledger, msg, network, state, exposure, stalenessMs, "NO_ACTION", undefined, undefined, bps(0), bps(0), 0, [], simulateFills);
+      appendRecord(ledger, msg, network, tissueState, narrativeRegime, exposure, stalenessMs, "NO_ACTION", undefined, undefined, bps(0), bps(0), 0, [], simulateFills, policyHash);
       return current();
     }
 
-    const priced = pricer.price(state.tissueState(msg.ts));
+    const priced = pricer.price(tissueState);
+    if (justBuiltPricer) {
+      // "Proof of Edge": the very first priced tick, before this session has processed a
+      // single score message — the desk's committed pre-match fair value.
+      preMatchCommitment = preparePreMatchCommitment(fixtureId, msg.ts, priced.markets);
+    }
     const oneX2 = priced.markets.find((m) => m.marketKey.market === "1X2");
     if (oneX2) {
       forecasts.push({
@@ -201,7 +264,18 @@ export function createEngineSession(
     const radarClass = latestRadarClass(rout.events);
     const inventoryNorm = inventoryNorms(exposure, priced, policy);
     const proposals = proposeQuotes(
-      { priced, market, inventoryNorm, stalenessMs, radarClass },
+      {
+        priced,
+        market,
+        inventoryNorm,
+        stalenessMs,
+        radarClass,
+        stoppageActive: tissueState.stoppageActive,
+        mutualDangerActive: tissueState.mutualDangerActive,
+        narrativeRegime,
+        openIntents: book.openIntents(),
+        nowTs: msg.ts,
+      },
       policy,
     );
     const risk = evaluateRisk(
@@ -245,7 +319,7 @@ export function createEngineSession(
         ladders.get(k)?.reset();
         txRetries.set(k, 0);
         for (const p of props) {
-          const intent = book.postIntent(p, fixtureId, msg.msgId);
+          const intent = book.postIntent(p, fixtureId, msg.msgId, msg.ts);
           exposure.upsertOpen(intent);
           posted.push(intent);
           quotes.push({
@@ -284,7 +358,8 @@ export function createEngineSession(
       ledger,
       msg,
       network,
-      state,
+      tissueState,
+      narrativeRegime,
       exposure,
       stalenessMs,
       action,
@@ -295,6 +370,7 @@ export function createEngineSession(
       top ? top.edgeBps : 0,
       posted,
       simulateFills,
+      policyHash,
     );
     return current();
   };
@@ -305,12 +381,14 @@ export function createEngineSession(
     radarEvents,
     halts,
     anchors,
+    preMatchCommitment,
     book,
     quotes,
     forecasts,
     finalScore: { ...finalScore },
     voided,
     closingMarket: market,
+    clockSkewEvents,
   });
 
   const finish = (): EngineResult => {
@@ -329,7 +407,11 @@ export function createEngineSession(
     return current();
   };
 
-  return { append, current, finish };
+  const kill = (): void => {
+    killed = true;
+  };
+
+  return { append, current, finish, kill };
 }
 
 export function runEngine(
@@ -446,7 +528,8 @@ function appendRecord(
   ledger: Ledger,
   msg: FeedMessage,
   network: Network,
-  state: MatchState,
+  tissueState: TissueState,
+  narrativeRegime: NarrativeRegime,
   exposure: ExposureTracker,
   feedGapMs: number,
   action: "POST" | "NO_ACTION" | "HALT",
@@ -457,6 +540,7 @@ function appendRecord(
   edgeBps: number,
   intents: readonly Intent[],
   simulated: boolean,
+  policyHash: string,
 ): void {
   ledger.append({
     triggerMsgId: msg.msgId,
@@ -466,15 +550,20 @@ function appendRecord(
     action,
     ...(radarClass ? { radarClass } : {}),
     ...(haltReason ? { haltReason } : {}),
+    policyHash,
     state: {
-      minute: state.minute,
-      homeScore: state.homeScore,
-      awayScore: state.awayScore,
-      homeReds: state.homeReds,
-      awayReds: state.awayReds,
+      minute: tissueState.minute,
+      homeScore: tissueState.homeScore,
+      awayScore: tissueState.awayScore,
+      homeReds: tissueState.homeReds,
+      awayReds: tissueState.awayReds,
       inventory: exposure.inventorySnapshot(),
       exposure: exposure.snapshot(),
       feedGapMs,
+      matchPhase: tissueState.matchPhase,
+      stoppageActive: tissueState.stoppageActive,
+      mutualDangerActive: tissueState.mutualDangerActive,
+      narrativeRegime,
     },
     tissueProb,
     marketProb,
