@@ -11,6 +11,7 @@ const ROUTES: readonly { readonly href: string; readonly label: string }[] = [
   { href: "/decisions", label: "Decisions" },
   { href: "/grade", label: "Grade" },
   { href: "/arena", label: "Arena" },
+  { href: "/scoreboard", label: "Scoreboard" },
   { href: "/verify", label: "Verify" },
   { href: "/replay", label: "Replay" },
   { href: "/analyst", label: "Ask Tissue" },

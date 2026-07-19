@@ -1,4 +1,5 @@
 import type { RadarClass } from "./radar.js";
+import type { Selection } from "./markets.js";
 
 /**
  * Grade sheet (PRD §2, §7). Auto-publishing, fill-independent. CLV grades every quote
@@ -67,4 +68,38 @@ export interface GradeSheet {
   readonly latency: readonly LatencyDistribution[];
   readonly perClass: readonly PerClassHitRate[];
   readonly pnl: RealizedPnl;
+}
+
+/**
+ * One priced quote in fixture order, CLV-graded against the close — the "did this decision
+ * beat the market" view a strike-rate/streak scoreboard is built from (win := clvBps > 0).
+ */
+export interface TimelineSample {
+  readonly seq: number;
+  readonly msgId: string;
+  readonly ts: number;
+  readonly marketKey: string;
+  readonly selection: Selection;
+  readonly side: "BACK" | "LAY";
+  readonly quoteMilliOdds: number;
+  readonly closingMilliOdds: number;
+  readonly clvBps: number;
+  readonly win: boolean;
+  readonly matched: boolean;
+  readonly radarClass?: RadarClass;
+}
+
+export interface StreakSummary {
+  readonly longestWinStreak: number;
+  readonly longestLossStreak: number;
+  readonly currentStreak: { readonly kind: "win" | "loss" | "none"; readonly length: number };
+}
+
+export interface BacktestTimeline {
+  readonly fixtureId: string;
+  readonly samples: readonly TimelineSample[];
+  /** Running win rate after each sample — samples[i] included — same length as samples. */
+  readonly cumulativeWinRate: readonly number[];
+  readonly strikeRate: number;
+  readonly streaks: StreakSummary;
 }

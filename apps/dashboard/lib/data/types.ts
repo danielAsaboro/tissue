@@ -2,6 +2,8 @@ import type {
   DecisionRecord,
   GradeSheet,
   RadarEvent,
+  StreakSummary,
+  TimelineSample,
   TissuePrice,
   ExposureSnapshot,
   InventorySnapshot,
@@ -163,6 +165,22 @@ export interface AblationMatrixSummary {
   readonly rows?: readonly AblationRow[];
 }
 
+/**
+ * Decision-by-decision scoreboard: every priced quote in fixture order, graded against the
+ * close, with a running win rate and streak analysis. Win rate here means CLV win rate — did
+ * the quote beat the closing line — pooled across samples, not an average of averages.
+ * Computed on demand from the fixture's authoritative corpus, same discipline as Arena.
+ */
+export interface BacktestSummary {
+  readonly available: boolean;
+  readonly reason?: string;
+  readonly fixtureId?: string;
+  readonly samples?: readonly TimelineSample[];
+  readonly cumulativeWinRate?: readonly number[];
+  readonly strikeRate?: number;
+  readonly streaks?: StreakSummary;
+}
+
 /** One point per decision, from the already-tracked ExposureSnapshot embedded in every
  *  DecisionRecord — no new backend calculation, just plotted instead of left in raw JSON. */
 export interface EquityCurvePoint {
@@ -191,6 +209,7 @@ export interface DashboardData {
   getAnchorEvidence(): Promise<readonly AnchorEvidenceRow[]>;
   getArenaSummary(): Promise<ArenaSummary>;
   getAblationMatrix(): Promise<AblationMatrixSummary>;
+  getBacktestTimeline(): Promise<BacktestSummary>;
   getCommitmentTimeline(): Promise<readonly CommitmentTimelineRow[]>;
   getEquityCurve(): Promise<readonly EquityCurvePoint[]>;
   getVenueExecutions(): Promise<readonly VenueExecutionRow[]>;

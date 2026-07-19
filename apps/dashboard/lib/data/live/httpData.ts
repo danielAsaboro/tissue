@@ -10,6 +10,7 @@ import type {
 import type {
   AblationMatrixSummary,
   ArenaSummary,
+  BacktestSummary,
   DashboardData,
   AnchorEvidenceRow,
   CommitmentTimelineRow,
@@ -344,5 +345,21 @@ export class HttpDashboardData implements DashboardData {
       return { available: false, reason: `The Tissue daemon returned HTTP ${response.status}.` };
     }
     return (await response.json()) as AblationMatrixSummary;
+  }
+
+  async getBacktestTimeline(): Promise<BacktestSummary> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/backtest`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch {
+      return { available: false, reason: "The Tissue daemon is temporarily unavailable." };
+    }
+    if (!response.ok && response.status !== 404) {
+      return { available: false, reason: `The Tissue daemon returned HTTP ${response.status}.` };
+    }
+    return (await response.json()) as BacktestSummary;
   }
 }

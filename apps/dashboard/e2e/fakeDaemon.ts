@@ -213,6 +213,26 @@ export async function startFakeDaemon(initial: FakeDeskState, port = 0): Promise
       ));
       return;
     }
+    if (url.pathname === "/backtest") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(
+        current.hasFixture === false
+          ? { available: false, reason: "no active fixture yet" }
+          : {
+            available: true,
+            fixtureId: "E2E-FX",
+            samples: [
+              { seq: 0, msgId: "m0", ts: Date.now(), marketKey: "1X2", selection: "HOME", side: "BACK", quoteMilliOdds: 1900, closingMilliOdds: 2000, clvBps: 260, win: true, matched: false },
+              { seq: 1, msgId: "m1", ts: Date.now() + 1000, marketKey: "1X2", selection: "HOME", side: "BACK", quoteMilliOdds: 2100, closingMilliOdds: 2000, clvBps: -240, win: false, matched: false },
+              { seq: 2, msgId: "m2", ts: Date.now() + 2000, marketKey: "1X2", selection: "HOME", side: "BACK", quoteMilliOdds: 1950, closingMilliOdds: 2000, clvBps: 130, win: true, matched: false },
+            ],
+            cumulativeWinRate: [1, 0.5, 0.6666666666666666],
+            strikeRate: 0.6666666666666666,
+            streaks: { longestWinStreak: 1, longestLossStreak: 1, currentStreak: { kind: "win", length: 1 } },
+          },
+      ));
+      return;
+    }
     if (url.pathname === "/grade-card.svg") {
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><rect width="1200" height="630" fill="#F2F0EB"/><text x="40" y="80" font-size="32">E2E fake grade card</text></svg>`;
       res.writeHead(200, { "content-type": "image/svg+xml" });

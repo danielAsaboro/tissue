@@ -320,6 +320,46 @@ describe("live desk integration", () => {
     expect(typeof body.clvEdgeBps).toBe("number");
   });
 
+  it("/backtest computes a real decision-by-decision timeline with streaks on demand", async () => {
+    const store = createInMemoryLiveStore();
+    for (const message of generateSyntheticCorpus(FIXTURE)) await store.appendLiveMessage(FIXTURE, message);
+    const liveConfig = config("http://127.0.0.1:1");
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), store);
+    desks.push(desk);
+    const api = createApiServer(desk, liveConfig);
+    const apiPort = await bind(api);
+
+    const response = await fetch(`http://127.0.0.1:${apiPort}/backtest?fixtureId=${FIXTURE}`);
+    const body = await response.json() as {
+      available: boolean;
+      fixtureId?: string;
+      samples?: readonly { win: boolean }[];
+      cumulativeWinRate?: readonly number[];
+      strikeRate?: number;
+      streaks?: { longestWinStreak: number; longestLossStreak: number };
+    };
+    expect(response.status).toBe(200);
+    expect(body.available).toBe(true);
+    expect(body.fixtureId).toBe(FIXTURE);
+    expect(body.samples!.length).toBe(body.cumulativeWinRate!.length);
+    expect(typeof body.strikeRate).toBe("number");
+    expect(body.streaks!.longestWinStreak).toBeGreaterThanOrEqual(0);
+    expect(body.streaks!.longestLossStreak).toBeGreaterThanOrEqual(0);
+  });
+
+  it("/backtest reports unavailable for a fixture with no corpus, without throwing", async () => {
+    const liveConfig = config("http://127.0.0.1:1");
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), createInMemoryLiveStore());
+    desks.push(desk);
+    const api = createApiServer(desk, liveConfig);
+    const apiPort = await bind(api);
+
+    const response = await fetch(`http://127.0.0.1:${apiPort}/backtest?fixtureId=NO-SUCH-FIXTURE`);
+    const body = await response.json() as { available: boolean };
+    expect(response.status).toBe(404);
+    expect(body.available).toBe(false);
+  });
+
   it("/grade-card.svg renders a real SVG on demand from the fixture's corpus", async () => {
     const store = createInMemoryLiveStore();
     for (const message of generateSyntheticCorpus(FIXTURE)) await store.appendLiveMessage(FIXTURE, message);

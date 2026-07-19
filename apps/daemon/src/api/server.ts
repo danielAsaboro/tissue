@@ -5,7 +5,7 @@ import { loadPolicy } from "../config/policy.js";
 import { runArena, summarizeArena } from "../arena/arena.js";
 import { runAblationMatrix } from "../arena/ablation.js";
 import { renderGradeCardSvg } from "../grader/gradeCard.js";
-import { grade } from "../grader/grader.js";
+import { buildBacktestTimeline, grade } from "../grader/grader.js";
 import { runEngine } from "../replay/engine.js";
 import { buildMerkleTree, merkleProof } from "../ledger/merkle.js";
 import { PROGRAM_ID } from "../exec/anchor.js";
@@ -206,7 +206,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
         json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
         return;
       }
-// On-demand — the SAME deterministic engine run over the SAME authoritative corpus the
+      // On-demand — the SAME deterministic engine run over the SAME authoritative corpus the
       // live desk already captured; not a second continuously-running live session.
       const arena = runArena(corpus, loadPolicy(), snapshot.network);
       json(res, 200, { available: true, ...summarizeArena(arena) });
@@ -226,11 +226,35 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
         json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
         return;
       }
-// Same on-demand, authoritative-corpus discipline as /arena — each regime graded
+      // Same on-demand, authoritative-corpus discipline as /arena — each regime graded
       // against the SAME neutralized baseline, isolating which flagged heuristic earns its
       // keep instead of only reporting the bundled effect.
       const matrix = runAblationMatrix(corpus, loadPolicy(), snapshot.network);
       json(res, 200, { available: true, ...matrix });
+      return;
+    }
+    if (url.pathname === "/backtest") {
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      if (!fixtureId) {
+        json(res, 200, { available: false, reason: "no active fixture yet" });
+        return;
+      }
+      let corpus;
+      try {
+        corpus = await desk.readLiveTape(fixtureId);
+        if (corpus.length === 0) throw new Error(`no corpus for fixture ${fixtureId}`);
+      } catch {
+        json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
+        return;
+      }
+      // Same on-demand, authoritative-corpus discipline as /arena — decision-by-decision CLV
+      // and streaks, not just the rolled-up aggregate. Closing line is whatever this fixture's
+      // corpus has seen so far, so an in-progress live fixture's numbers are provisional and
+      // will keep moving until the match actually closes — same as the rest of this desk's
+      // "no fake finality" discipline.
+      const result = runEngine(corpus, loadPolicy(), snapshot.network);
+      const timeline = buildBacktestTimeline(result);
+      json(res, 200, { available: true, ...timeline });
       return;
     }
     if (url.pathname === "/grade-card.svg") {
@@ -353,7 +377,7 @@ const result = runEngine(corpus, loadPolicy(), snapshot.network);
     }
     json(res, 404, {
       error: "not_found",
-      available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
+      available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/backtest", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
     });
   }
   server.requestTimeout = 15_000;
