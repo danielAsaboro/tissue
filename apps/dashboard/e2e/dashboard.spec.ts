@@ -9,7 +9,7 @@ import { decision } from "./fakeDaemon";
  * halt/error condition is exactly the failure mode this suite exists to catch.
  */
 
-const PAGES = ["/overview", "/quotes", "/radar", "/decisions", "/grade", "/arena", "/analyst"] as const;
+const PAGES = ["/overview", "/quotes", "/radar", "/decisions", "/grade", "/arena", "/scoreboard", "/analyst"] as const;
 
 test.describe("every page renders without crashing, across every desk status", () => {
   for (const status of ["starting", "verifying", "quoting", "watching", "halted", "error"] as const) {
@@ -105,11 +105,7 @@ test.describe("hash-chain verification is a real, clickable action", () => {
     const verifyButton = page.getByRole("button", { name: /verify/i });
     if (await verifyButton.count() > 0) {
       await verifyButton.first().click();
-      // Generous timeout: this is the only test that invokes verifyHashChainAction, so on a
-      // cold CI runner this is also the first time Next.js dev-mode JIT-compiles that Server
-      // Action bundle — comfortably under 1s warm locally, but the default 5s assertion
-      // timeout was observed flaking against that one-time compile cost in CI.
-      await expect(page.locator("body")).toContainText(/ok|verified|valid/i, { timeout: 20_000 });
+      await expect(page.locator("body")).toContainText(/ok|verified|valid/i, { timeout: 10_000 });
     }
   });
 });

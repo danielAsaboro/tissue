@@ -11,6 +11,13 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@tissue/shared"],
   poweredByHeader: false,
   output: "standalone",
+  // Dev-server-only (no effect on `next build`/`next start`): the Playwright E2E harness
+  // (playwright.config.ts) runs `next dev` bound to 127.0.0.1, which Next.js's default
+  // same-origin check otherwise blocks for its own HMR websocket — every navigation was
+  // logging a failed cross-origin HMR handshake, and the resulting dev-runtime instability
+  // was silently swallowing a client component's pending state update mid-transition (root
+  // cause of a flaky E2E test that looked like a timing issue but wasn't).
+  allowedDevOrigins: ["127.0.0.1"],
   env: {
     NEXT_PUBLIC_SOLANA_RPC_URL: PUBLIC_SOLANA_RPC_URL,
   },
