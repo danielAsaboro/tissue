@@ -1,6 +1,7 @@
 import type {
   DecisionRecord,
   ExposureSnapshot,
+  FixtureMeta,
   GradeSheet,
   InventorySnapshot,
   Network,
@@ -17,6 +18,7 @@ import type {
   EquityCurvePoint,
   GaugeState,
   HaltState,
+  MatchSummary,
   QuoteTapeRow,
   ReplayControl,
   VenueExecutionRow,
@@ -81,6 +83,7 @@ interface ApiVenueExecution {
 
 interface ApiFixture {
   readonly fixtureId: string;
+  readonly meta: FixtureMeta | null;
   readonly decisions: readonly DecisionRecord[];
   readonly quotes: readonly ApiQuote[];
   readonly radarEvents: readonly RadarEvent[];
@@ -147,9 +150,10 @@ export class HttpDashboardData implements DashboardData {
     return fallback ? { ...state, activeFixtureId: fallback.fixtureId, fixtures: [fallback] } : state;
   }
 
-  private async fixtureFallback(): Promise<ApiFixture | null> {
+  private async fixtureFallback(fixtureId?: string): Promise<ApiFixture | null> {
     try {
-      const response = await fetch(`${this.baseUrl}/fixture`, {
+      const qs = fixtureId ? `?fixtureId=${encodeURIComponent(fixtureId)}` : "";
+      const response = await fetch(`${this.baseUrl}/fixture${qs}`, {
         cache: "no-store",
         signal: AbortSignal.timeout(15_000),
       });
@@ -163,6 +167,14 @@ export class HttpDashboardData implements DashboardData {
 
   private active(state: ApiState): ApiFixture | null {
     return state.fixtures.find((fixture) => fixture.fixtureId === state.activeFixtureId) ?? state.fixtures[0] ?? null;
+  }
+
+  /** Omit fixtureId for the live/fallback fixture (today's default); pass one to look up a
+   *  specific match from the full history (e.g. from a Match History row) directly, bypassing
+   *  the live-desk-first resolution entirely. */
+  private async resolveFixture(fixtureId?: string): Promise<ApiFixture | null> {
+    if (fixtureId) return this.fixtureFallback(fixtureId);
+    return this.active(await this.state());
   }
 
   async getTissueVsMarket(): Promise<TissueVsMarketSeries> {
@@ -247,9 +259,8 @@ export class HttpDashboardData implements DashboardData {
     };
   }
 
-  async getDecisionFeed(): Promise<readonly DecisionRecord[]> {
-    const state = await this.state();
-    return this.active(state)?.decisions ?? [];
+  async getDecisionFeed(fixtureId?: string): Promise<readonly DecisionRecord[]> {
+    return (await this.resolveFixture(fixtureId))?.decisions ?? [];
   }
 
   async verifyHashChain(): Promise<{ ok: boolean; brokenAtSeq?: number }> {
@@ -262,9 +273,8 @@ export class HttpDashboardData implements DashboardData {
     return { ok: result.ok };
   }
 
-  async getGradeSheet(): Promise<GradeSheet | null> {
-    const state = await this.state();
-    return this.active(state)?.grade ?? null;
+  async getGradeSheet(fixtureId?: string): Promise<GradeSheet | null> {
+    return (await this.resolveFixture(fixtureId))?.grade ?? null;
   }
 
   async getReplayControl(): Promise<ReplayControl> {
@@ -350,6 +360,46 @@ export class HttpDashboardData implements DashboardData {
   async getActiveFixtureId(): Promise<string | null> {
     const state = await this.state();
     return this.active(state)?.fixtureId ?? null;
+  }
+
+  async getActiveFixtureMeta(fixtureId?: string): Promise<FixtureMeta | null> {
+    return (await this.resolveFixture(fixtureId))?.meta ?? null;
+  }
+
+  async getMatchHistory(): Promise<readonly MatchSummary[]> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/fixtures`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch {
+      return [];
+    }
+    if (!response.ok) return [];
+    const body = (await response.json()) as {
+      available: boolean;
+      fixtures?: readonly {
+        fixtureId: string;
+        meta: FixtureMeta | null;
+        messages: number;
+        decisions: number;
+        finalScore: { home: number; away: number };
+        hashChainOk: boolean;
+        clv: { n: number; meanClvBps: number; pctPositive: number };
+      }[];
+    };
+    return (body.fixtures ?? []).map((row) => ({
+      fixtureId: row.fixtureId,
+      meta: row.meta,
+      messages: row.messages,
+      decisions: row.decisions,
+      finalScore: row.finalScore,
+      hashChainOk: row.hashChainOk,
+      clvN: row.clv.n,
+      meanClvBps: row.clv.meanClvBps,
+      pctPositive: row.clv.pctPositive,
+    }));
   }
 
   async getAblationMatrix(): Promise<AblationMatrixSummary> {

@@ -1,5 +1,6 @@
 import { dashboardData } from "@/lib/data";
 import { RadarList } from "@/components/RadarList";
+import { MatchHeader } from "@/components/MatchHeader";
 
 const CLASSES = [
   { id: "late-reaction", body: "Market moved after the event — too slow vs tissue." },
@@ -16,9 +17,13 @@ const CLASSES = [
 ] as const;
 
 export default async function RadarPage() {
-  const events = await dashboardData.getRadarEvents();
+  const [events, meta] = await Promise.all([
+    dashboardData.getRadarEvents(),
+    dashboardData.getActiveFixtureMeta(),
+  ]);
   return (
     <>
+      <MatchHeader meta={meta} />
       <section className="panel edge-strip">
         <h2>Signal classes</h2>
         <p className="muted" style={{ marginBottom: 12 }}>

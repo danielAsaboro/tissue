@@ -6,3 +6,4 @@ export * from "./radar.js";
 export * from "./decision.js";
 export * from "./grade.js";
 export * from "./analyst.js";
+export * from "./fixtureMeta.js";

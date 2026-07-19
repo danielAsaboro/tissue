@@ -43,7 +43,15 @@ export function formatMs(ms: number): string {
   return `${ms.toLocaleString("en-US")} ms`;
 }
 
-/** Epoch ms → deterministic UTC time "HH:MM:SS". */
+/** Epoch ms → deterministic UTC date + time "2026-06-19 01:00:00 UTC". Always includes the
+ *  date: fixtures span a multi-week tournament window, so time-of-day alone can't tell two
+ *  decisions from different matches apart. */
 export function formatClock(tsMs: number): string {
-  return new Date(tsMs).toISOString().slice(11, 19);
+  return `${new Date(tsMs).toISOString().replace("T", " ").slice(0, 19)} UTC`;
+}
+
+/** ISO 8601 kickoff → "Jun 19, 2026". Coarser than formatClock — a page-level match label,
+ *  not a per-row timestamp. */
+export function formatMatchDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 }

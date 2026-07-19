@@ -193,6 +193,31 @@ main > h1 {
   font-weight: 500;
 }
 
+.topnav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  font-size: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-white);
+  color: var(--fg);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .live-row {
   display: flex;
   justify-content: flex-end;
@@ -279,6 +304,31 @@ tbody tr:last-child td {
 td.num,
 th.num {
   text-align: right;
+}
+
+/* Match header : real team identity strip, above a page's own title/panels. */
+.match-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+/* Decision reasoning : plain-English "why" under each row, deliberately allowed to wrap
+   unlike every other dense/nowrap table cell — it exists to be read, not scanned. */
+.decision-why-row td {
+  padding-top: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.decision-why {
+  white-space: normal;
+  font-size: var(--text-caption);
+  color: var(--ash);
+  font-style: italic;
+  line-height: 1.4;
 }
 
 /* Badges : pill, hairline */
@@ -636,6 +686,28 @@ button.btn-primary {
   .evidence-list div {
     grid-template-columns: 1fr;
     gap: var(--spacing-4);
+  }
+
+  /* Eleven tabs wrapping as loose pills is what "scattered" looks like on a phone — collapse
+     into a single toggle that cascades the full list down as one column instead. */
+  .topnav-toggle {
+    display: flex;
+  }
+
+  .topnav-tabs {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    gap: 2px;
+    order: 3;
+  }
+
+  .topnav-tabs.open {
+    display: flex;
+  }
+
+  .topnav-tabs a {
+    padding: 10px 12px;
   }
 }
 

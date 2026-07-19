@@ -1,5 +1,6 @@
 import type {
   DecisionRecord,
+  FixtureMeta,
   GradeSheet,
   RadarEvent,
   StreakSummary,
@@ -9,6 +10,8 @@ import type {
   InventorySnapshot,
   Network,
 } from "@tissue/shared";
+
+export type { FixtureMeta };
 
 /**
  * Dashboard data seam (PRD Phase 0). Components consume ONLY these interfaces — they
@@ -181,6 +184,23 @@ export interface BacktestSummary {
   readonly streaks?: StreakSummary;
 }
 
+/**
+ * One row per fixture this desk has ever captured (live + backtest archive) — the match
+ * history index. Deliberately excludes the full decisions array (see BacktestSummary /
+ * getDecisionFeed for one fixture's full detail); this is the "match 1, 2, 3…" overview.
+ */
+export interface MatchSummary {
+  readonly fixtureId: string;
+  readonly meta: FixtureMeta | null;
+  readonly messages: number;
+  readonly decisions: number;
+  readonly finalScore: { readonly home: number; readonly away: number };
+  readonly hashChainOk: boolean;
+  readonly clvN: number;
+  readonly meanClvBps: number;
+  readonly pctPositive: number;
+}
+
 /** One point per decision, from the already-tracked ExposureSnapshot embedded in every
  *  DecisionRecord — no new backend calculation, just plotted instead of left in raw JSON. */
 export interface EquityCurvePoint {
@@ -201,10 +221,13 @@ export interface DashboardData {
   getRadarEvents(): Promise<readonly RadarEvent[]>;
   getGauges(): Promise<GaugeState>;
   getHalt(): Promise<HaltState>;
-  getDecisionFeed(): Promise<readonly DecisionRecord[]>;
+  /** Omit fixtureId for the live/fallback fixture (today's default); pass one (from
+   *  MatchSummary.fixtureId, e.g. via a page's ?fixtureId= search param) to view a specific
+   *  match from the full history instead. */
+  getDecisionFeed(fixtureId?: string): Promise<readonly DecisionRecord[]>;
   /** Recompute the hash chain over the decision feed; true iff it verifies. */
   verifyHashChain(): Promise<{ ok: boolean; brokenAtSeq?: number }>;
-  getGradeSheet(): Promise<GradeSheet | null>;
+  getGradeSheet(fixtureId?: string): Promise<GradeSheet | null>;
   getReplayControl(): Promise<ReplayControl>;
   getAnchorEvidence(): Promise<readonly AnchorEvidenceRow[]>;
   getArenaSummary(): Promise<ArenaSummary>;
@@ -217,4 +240,10 @@ export interface DashboardData {
    *  in-browser verifier (VerifyPanel), which must know which fixture a decision seq
    *  belongs to before it can look it up in the public /record export. */
   getActiveFixtureId(): Promise<string | null>;
+  /** Real-world identity (teams, kickoff) for the given fixture (default: the fixture
+   *  getActiveFixtureId() resolves to). Null when it has no matching schedule entry — never
+   *  fabricated. */
+  getActiveFixtureMeta(fixtureId?: string): Promise<FixtureMeta | null>;
+  /** Every fixture this desk has ever captured, newest schedule first — the match history. */
+  getMatchHistory(): Promise<readonly MatchSummary[]>;
 }

@@ -2,17 +2,20 @@ import { dashboardData } from "@/lib/data";
 import { HaltBanner } from "@/components/HaltBanner";
 import { TissueVsMarketChart } from "@/components/TissueVsMarketChart";
 import { Gauges } from "@/components/Gauges";
+import { MatchHeader } from "@/components/MatchHeader";
 import Link from "next/link";
 
 export default async function OverviewPage() {
-  const [halt, series, gauges] = await Promise.all([
+  const [halt, series, gauges, meta] = await Promise.all([
     dashboardData.getHalt(),
     dashboardData.getTissueVsMarket(),
     dashboardData.getGauges(),
+    dashboardData.getActiveFixtureMeta(),
   ]);
 
   return (
     <div>
+      <MatchHeader meta={meta} />
       <HaltBanner halt={halt} />
 
       {/* Judge / competitor edge: deterministic desk, not LLM vibes */}

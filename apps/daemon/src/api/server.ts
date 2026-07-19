@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { FeedMessage, Network } from "@tissue/shared";
 import type { LiveConfig } from "../runtime/config.js";
 import type { LiveDesk } from "../runtime/liveDesk.js";
-import { loadPolicy } from "../config/policy.js";
+import type { DeskSnapshot, FixtureSnapshot } from "../runtime/types.js";
+import { loadPolicy, type Policy } from "../config/policy.js";
 import { runArena, summarizeArena } from "../arena/arena.js";
 import { runAblationMatrix } from "../arena/ablation.js";
 import { renderGradeCardSvg } from "../grader/gradeCard.js";
@@ -10,6 +12,7 @@ import { runEngine } from "../replay/engine.js";
 import { buildMerkleTree, merkleProof } from "../ledger/merkle.js";
 import { verifyChain } from "../ledger/ledger.js";
 import { PROGRAM_ID } from "../exec/anchor.js";
+import { getFixtureMeta } from "../data/fixtureMeta.js";
 
 const MAX_SSE_CLIENTS = 100;
 const MAX_SSE_BUFFER_BYTES = 1_048_576;
@@ -54,7 +57,57 @@ function metrics(res: ServerResponse, body: string): void {
   res.end(body);
 }
 
+function computeFixtureSnapshot(fixtureId: string, corpus: readonly FeedMessage[], policy: Policy, network: Network): FixtureSnapshot {
+  const result = runEngine(corpus, policy, network);
+  const records = result.ledger.all();
+  return {
+    fixtureId,
+    messages: corpus.length,
+    decisions: records,
+    quotes: result.quotes,
+    radarEvents: result.radarEvents,
+    anchors: [],
+    grade: grade(result, policy),
+    headHash: result.ledger.headHash,
+    hashChainOk: verifyChain(records).ok,
+    finalScore: result.finalScore,
+    preMatchCommitment: null,
+    checkpoints: [],
+    venueExecutions: [],
+  };
+}
+
+const FIXTURE_SNAPSHOTS_TTL_MS = 30_000;
+
 export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
+  let fixtureSnapshotsCache: { at: number; data: readonly FixtureSnapshot[] } | null = null;
+  // Every fixture this store has ever captured (live + backtest archive), merged with the
+  // live desk's own in-memory fixtures (which carry real on-chain proof evidence that can't be
+  // re-derived from a corpus replay). Powers /record and /verify with the SAME complete fixture
+  // set the dashboard falls back to, instead of the live-only view that leaves archived
+  // fixtures unverifiable. Cached briefly — recomputing every fixture's engine run on every
+  // request is wasteful when nothing has changed.
+  async function allFixtureSnapshots(snapshot: DeskSnapshot): Promise<readonly FixtureSnapshot[]> {
+    const now = Date.now();
+    if (fixtureSnapshotsCache && now - fixtureSnapshotsCache.at < FIXTURE_SNAPSHOTS_TTL_MS) {
+      return fixtureSnapshotsCache.data;
+    }
+    const live = new Map(snapshot.fixtures.map((fixture) => [fixture.fixtureId, fixture]));
+    const allIds = await desk.listFixtureIds();
+    const policy = loadPolicy();
+    const computed = await Promise.all(
+      allIds
+        .filter((fixtureId) => !live.has(fixtureId))
+        .map(async (fixtureId): Promise<FixtureSnapshot | null> => {
+          const corpus = await desk.readLiveTape(fixtureId);
+          if (corpus.length === 0) return null;
+          return computeFixtureSnapshot(fixtureId, corpus, policy, snapshot.network);
+        }),
+    );
+    const data = [...snapshot.fixtures, ...computed.filter((fixture): fixture is FixtureSnapshot => fixture !== null)];
+    fixtureSnapshotsCache = { at: now, data };
+    return data;
+  }
   const sseClients = new Set<ServerResponse>();
   const unsubscribe = desk.subscribe((snapshot) => {
     const frame = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
@@ -124,10 +177,35 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       return;
     }
     if (url.pathname === "/state") {
-      json(res, 200, snapshot);
+      json(res, 200, {
+        ...snapshot,
+        fixtures: snapshot.fixtures.map((fixture) => ({ ...fixture, meta: getFixtureMeta(fixture.fixtureId) })),
+      });
+      return;
+    }
+    if (url.pathname === "/fixtures") {
+      // Lightweight per-fixture summary across EVERY fixture this store has ever captured —
+      // the "match history" list. /fixture (singular) computes one fixture's full decisions;
+      // this is the index over all of them, deliberately excluding the (large) decisions array.
+      const fixtures = await allFixtureSnapshots(snapshot);
+      json(res, 200, {
+        available: true,
+        fixtures: fixtures
+          .map((fixture) => ({
+            fixtureId: fixture.fixtureId,
+            meta: getFixtureMeta(fixture.fixtureId),
+            messages: fixture.messages,
+            decisions: fixture.decisions.length,
+            finalScore: fixture.finalScore,
+            hashChainOk: fixture.hashChainOk,
+            clv: { n: fixture.grade.clv.n, meanClvBps: fixture.grade.clv.meanClvBps, pctPositive: fixture.grade.clv.pctPositive },
+          }))
+          .sort((a, b) => (a.meta?.kickoff ?? "").localeCompare(b.meta?.kickoff ?? "")),
+      });
       return;
     }
     if (url.pathname === "/record") {
+      const fixtures = await allFixtureSnapshots(snapshot);
       json(res, 200, {
         schema: "tissue.record.v1",
         generatedAt: new Date().toISOString(),
@@ -150,8 +228,9 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
           "that risked capital. Slip is the only enabled adapter today; fetch submissionTxSig " +
           "from any public RPC to confirm it landed.",
         portfolio: snapshot.portfolio,
-        fixtures: snapshot.fixtures.map((fixture) => ({
+        fixtures: fixtures.map((fixture) => ({
           fixtureId: fixture.fixtureId,
+          meta: getFixtureMeta(fixture.fixtureId),
           headHash: fixture.headHash,
           hashChainOk: fixture.hashChainOk,
           finalScore: fixture.finalScore,
@@ -183,10 +262,12 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       return;
     }
     if (url.pathname === "/verify") {
+      const fixtures = await allFixtureSnapshots(snapshot);
       json(res, 200, {
-        ok: snapshot.fixtures.every((fixture) => fixture.hashChainOk),
-        fixtures: snapshot.fixtures.map((fixture) => ({
+        ok: fixtures.every((fixture) => fixture.hashChainOk),
+        fixtures: fixtures.map((fixture) => ({
           fixtureId: fixture.fixtureId,
+          meta: getFixtureMeta(fixture.fixtureId),
           ok: fixture.hashChainOk,
           headHash: fixture.headHash,
         })),
@@ -262,7 +343,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       // "no fake finality" discipline.
       const result = runEngine(corpus, loadPolicy(), snapshot.network);
       const timeline = buildBacktestTimeline(result);
-      json(res, 200, { available: true, ...timeline });
+      json(res, 200, { available: true, meta: getFixtureMeta(fixtureId), ...timeline });
       return;
     }
     if (url.pathname === "/fixture") {
@@ -293,6 +374,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       json(res, 200, {
         available: true,
         fixtureId,
+        meta: getFixtureMeta(fixtureId),
         decisions: records,
         quotes: result.quotes.map((q) => ({
           msgId: q.msgId,
@@ -438,7 +520,7 @@ const result = runEngine(corpus, loadPolicy(), snapshot.network);
     }
     json(res, 404, {
       error: "not_found",
-      available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/backtest", "/fixture", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
+      available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/backtest", "/fixture", "/fixtures", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
     });
   }
   server.requestTimeout = 15_000;
