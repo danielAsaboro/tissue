@@ -17,6 +17,7 @@ function config(credentialsPath: string): LiveConfig {
     allowedOrigins: [],
     rpcUrl: "https://api.devnet.solana.com",
     anchorMode: "view",
+    databaseUrl: "postgres://test:test@localhost:5432/test",
   };
 }
 

@@ -8,6 +8,7 @@
     "activate:devnet": "tsx scripts/liveActivate.ts",
     "capture:corpus": "tsx scripts/captureCorpus.ts",
     "capture:worldcup": "tsx scripts/captureAllWorldCup.ts",
+    "backfill:supabase": "tsx scripts/backfillSupabase.ts",
     "fixtures:serve": "tsx scripts/serveHistoricalFixtures.ts",
     "drill:restart": "node scripts/restartDrill.mjs",
     "drill:streamdrop": "node scripts/streamDropDrill.mjs",
@@ -32,6 +33,7 @@
     "@solana/web3.js": "^1.98.0",
     "@tissue/shared": "workspace:*",
     "@tissue/slip": "workspace:*",
+    "postgres": "^3.4.5",
     "smol-toml": "^1.3.1",
     "tweetnacl": "^1.0.3"
   },

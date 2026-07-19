@@ -1,18 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { millis, type ScoreMessage } from "@tissue/shared";
 import { createApiServer } from "../api/server.js";
-import { CORPUS_DIR, corpusPath, readCorpus, writeCorpus } from "../ingest/corpus.js";
+import { CORPUS_DIR } from "../ingest/corpus.js";
 import { loadPolicy } from "../config/policy.js";
-import { readLedgerJsonl } from "../ledger/ledger.js";
 import { runEngine } from "../replay/engine.js";
 import type { LiveConfig } from "./config.js";
 import { admittedSourceMessage, assertPersistedLedgerPrefix, LiveDesk, reconcilePersistedLedger, sumPortfolioRisk } from "./liveDesk.js";
 import { generateSyntheticCorpus } from "../ingest/synthetic.js";
+import { createInMemoryLiveStore } from "../storage/inMemoryLiveStore.js";
 
 const FIXTURE = "LIVE-INTEGRATION-1";
+const TEST_DATABASE_URL = "postgres://test:test@localhost:5432/test";
 const servers: Server[] = [];
 const streams = new Set<ServerResponse>();
 const desks: LiveDesk[] = [];
@@ -45,6 +46,7 @@ function config(origin: string): LiveConfig {
     allowedOrigins: ["http://localhost:3000"],
     rpcUrl: "http://127.0.0.1:8899",
     anchorMode: "view",
+    databaseUrl: TEST_DATABASE_URL,
   };
 }
 
@@ -89,13 +91,12 @@ afterEach(async () => {
   for (const stream of streams) stream.end();
   streams.clear();
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
-  rmSync(corpusPath(FIXTURE), { force: true });
-  rmSync(join(CORPUS_DIR, `${FIXTURE}.ledger.jsonl`), { force: true });
+  // *.analyst.json and live-state.json are the two deliberately-still-file-based exports
+  // (cross-service contract with apps/analyst, and a debug-only cache respectively) — every
+  // other persistence path now goes through the per-test in-memory LiveStore, which needs no
+  // cleanup of its own.
   rmSync(join(CORPUS_DIR, `${FIXTURE}.analyst.json`), { force: true });
-  rmSync(join(CORPUS_DIR, "anchor-evidence.json"), { force: true });
-  rmSync(join(CORPUS_DIR, "anchor-evidence.jsonl"), { force: true });
   rmSync(join(CORPUS_DIR, "live-state.json"), { force: true });
-  rmSync(join(CORPUS_DIR, "pre-match-commitments.jsonl"), { force: true });
 });
 
 describe("live desk integration", () => {
@@ -146,7 +147,8 @@ describe("live desk integration", () => {
     });
     const txlinePort = await bind(txline);
     const liveConfig = config(`http://127.0.0.1:${txlinePort}`);
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "fixture-jwt", apiToken: "fixture-token" });
+    const store = createInMemoryLiveStore();
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "fixture-jwt", apiToken: "fixture-token" }, loadPolicy(), store);
     desks.push(desk);
     await desk.start();
     await waitFor(() => desk.snapshot().proofs.failed === 2);
@@ -160,12 +162,9 @@ describe("live desk integration", () => {
     expect(state.execution).toBe("quote-publication");
     expect(state.fixtures).toHaveLength(0);
     expect(state.proofs.failed).toBe(2);
-    expect(existsSync(corpusPath(FIXTURE))).toBe(false);
-    expect(existsSync(join(CORPUS_DIR, `${FIXTURE}.analyst.json`))).toBe(false);
-    const proofJournal = readFileSync(join(CORPUS_DIR, "anchor-evidence.jsonl"), "utf8")
-      .trim().split("\n").map((line) => JSON.parse(line) as { messageId: string });
+    expect(await store.liveTapeExists(FIXTURE)).toBe(false);
+    const proofJournal = await store.readAllAnchorEvidenceRows();
     expect(proofJournal.map((row) => row.messageId).sort()).toEqual(["odds-1", "score-1"]);
-    expect(existsSync(join(CORPUS_DIR, "anchor-evidence.json"))).toBe(false);
 
     const verify = await fetch(`http://127.0.0.1:${apiPort}/verify`).then((response) => response.json()) as { ok: boolean };
     expect(verify.ok).toBe(true);
@@ -187,7 +186,7 @@ describe("live desk integration", () => {
     });
     const txlinePort = await bind(txline);
     const liveConfig = config(`http://127.0.0.1:${txlinePort}`);
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "invalid", apiToken: "invalid" });
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "invalid", apiToken: "invalid" }, loadPolicy(), createInMemoryLiveStore());
     desks.push(desk);
     await desk.start();
     await waitFor(() => desk.snapshot().status === "error");
@@ -209,9 +208,10 @@ describe("live desk integration", () => {
       if (req.url === "/api/scores/stream") scoresResponse = res;
     });
     const txlinePort = await bind(txline);
+    const store = createInMemoryLiveStore();
     const desk = new LiveDesk(config(`http://127.0.0.1:${txlinePort}`), {
       network: "devnet", jwt: "fixture-jwt", apiToken: "fixture-token",
-    });
+    }, loadPolicy(), store);
     desks.push(desk);
     await desk.start();
     await waitFor(() => Boolean(scoresResponse));
@@ -227,7 +227,7 @@ describe("live desk integration", () => {
       Minute: 1, Stats: { "1": 0, "2": 0, "5": 0, "6": 0 },
     })}\n\n`);
     await waitFor(() => desk.snapshot().proofs.failed === 2);
-    expect(existsSync(corpusPath(FIXTURE))).toBe(false);
+    expect(await store.liveTapeExists(FIXTURE)).toBe(false);
     expect(desk.snapshot().fixtures).toHaveLength(0);
   });
 
@@ -248,7 +248,7 @@ describe("live desk integration", () => {
     const policy = loadPolicy();
     const desk = new LiveDesk(config(`http://127.0.0.1:${txlinePort}`), {
       network: "devnet", jwt: "fixture-jwt", apiToken: "fixture-token",
-    }, policy);
+    }, policy, createInMemoryLiveStore());
     desks.push(desk);
     await desk.start();
     await waitFor(() => Boolean(scoresResponse));
@@ -272,39 +272,42 @@ describe("live desk integration", () => {
   it("refuses to erase a corrupted persisted decision chain", async () => {
     const now = Date.now();
     const existing = score("persisted-score", now, 1);
-    writeCorpus(FIXTURE, [existing]);
-    const ledgerPath = join(CORPUS_DIR, `${FIXTURE}.ledger.jsonl`);
-    runEngine([existing], loadPolicy(), "devnet", { feedGapHalt: true, simulateFills: false }).ledger.writeJsonl(ledgerPath);
-    const record = JSON.parse(readFileSync(ledgerPath, "utf8").trim()) as Record<string, unknown>;
-    record.hash = "f".repeat(64);
-    writeFileSync(ledgerPath, `${JSON.stringify(record)}\n`, "utf8");
+    const store = createInMemoryLiveStore();
+    await store.appendLiveMessage(FIXTURE, existing);
+    const built = runEngine([existing], loadPolicy(), "devnet", { feedGapHalt: true, simulateFills: false });
+    const record = built.ledger.all()[0]!;
+    await store.appendDecision(FIXTURE, { ...record, hash: "f".repeat(64) });
 
     const rebuilt = runEngine([existing], loadPolicy(), "devnet", { feedGapHalt: true, simulateFills: false });
-    expect(() => assertPersistedLedgerPrefix(FIXTURE, rebuilt)).toThrow("hash chain is broken");
-    expect(readCorpus(FIXTURE)).toHaveLength(1);
-    expect(readFileSync(ledgerPath, "utf8")).toContain("f".repeat(64));
+    await expect(assertPersistedLedgerPrefix(FIXTURE, rebuilt, store)).rejects.toThrow("hash chain is broken");
+    expect(await store.readLiveTape(FIXTURE)).toHaveLength(1);
+    const persisted = await store.readDecisions(FIXTURE);
+    expect(persisted[0]!.hash).toBe("f".repeat(64));
   });
 
   it("recovers a valid ledger prefix when corpus persistence completed first", async () => {
     const now = Date.now();
     const first = score("score-1", now, 1);
     const second = score("score-2", now + 1_000, 2);
-    writeCorpus(FIXTURE, [first, second]);
-    const ledgerPath = join(CORPUS_DIR, `${FIXTURE}.ledger.jsonl`);
-    runEngine([first], loadPolicy(), "devnet", { feedGapHalt: true, simulateFills: false }).ledger.writeJsonl(ledgerPath);
+    const store = createInMemoryLiveStore();
+    await store.appendLiveMessage(FIXTURE, first);
+    await store.appendLiveMessage(FIXTURE, second);
+    const firstOnly = runEngine([first], loadPolicy(), "devnet", { feedGapHalt: true, simulateFills: false });
+    await store.appendDecision(FIXTURE, firstOnly.ledger.all()[0]!);
 
     const rebuilt = runEngine([first, second], loadPolicy(), "devnet", { feedGapHalt: true, simulateFills: false });
-    expect(() => assertPersistedLedgerPrefix(FIXTURE, rebuilt)).not.toThrow();
-    reconcilePersistedLedger(FIXTURE, rebuilt);
-    const recovered = readLedgerJsonl(ledgerPath);
+    await expect(assertPersistedLedgerPrefix(FIXTURE, rebuilt, store)).resolves.not.toThrow();
+    await reconcilePersistedLedger(FIXTURE, rebuilt, store);
+    const recovered = await store.readDecisions(FIXTURE);
     expect(recovered).toHaveLength(2);
     expect(recovered.at(-1)?.hash).toBe(rebuilt.ledger.headHash);
   });
 
   it("/arena computes a real head-to-head summary on demand from the fixture's corpus", async () => {
-    writeCorpus(FIXTURE, generateSyntheticCorpus(FIXTURE));
+    const store = createInMemoryLiveStore();
+    for (const message of generateSyntheticCorpus(FIXTURE)) await store.appendLiveMessage(FIXTURE, message);
     const liveConfig = config("http://127.0.0.1:1"); // unused — no SSE traffic in this test
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), store);
     desks.push(desk);
     const api = createApiServer(desk, liveConfig);
     const apiPort = await bind(api);
@@ -318,9 +321,10 @@ describe("live desk integration", () => {
   });
 
   it("/grade-card.svg renders a real SVG on demand from the fixture's corpus", async () => {
-    writeCorpus(FIXTURE, generateSyntheticCorpus(FIXTURE));
+    const store = createInMemoryLiveStore();
+    for (const message of generateSyntheticCorpus(FIXTURE)) await store.appendLiveMessage(FIXTURE, message);
     const liveConfig = config("http://127.0.0.1:1");
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), store);
     desks.push(desk);
     const api = createApiServer(desk, liveConfig);
     const apiPort = await bind(api);
@@ -335,7 +339,7 @@ describe("live desk integration", () => {
 
   it("/arena reports unavailable for a fixture with no corpus, without throwing", async () => {
     const liveConfig = config("http://127.0.0.1:1");
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), createInMemoryLiveStore());
     desks.push(desk);
     const api = createApiServer(desk, liveConfig);
     const apiPort = await bind(api);
@@ -348,7 +352,7 @@ describe("live desk integration", () => {
 
   it("/record exposes a real, self-describing public export — schema, network, oracle program, and verification instructions — even with no fixtures yet", async () => {
     const liveConfig = config("http://127.0.0.1:1");
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), createInMemoryLiveStore());
     desks.push(desk);
     const api = createApiServer(desk, liveConfig);
     const apiPort = await bind(api);
@@ -375,7 +379,7 @@ describe("live desk integration", () => {
 
   it("reports an honest null wallet balance when no keypair is configured, rather than a fabricated zero", async () => {
     const liveConfig = config("http://127.0.0.1:1");
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), createInMemoryLiveStore());
     desks.push(desk);
     const snapshot = desk.snapshot();
     expect(snapshot.wallet).toEqual({ pubkey: null, lamports: null, low: false, checkedAt: null });
@@ -401,8 +405,9 @@ describe.runIf(Boolean(process.env.TISSUE_KEYPAIR_PATH))("wallet balance watchdo
       rpcUrl: "https://api.devnet.solana.com",
       anchorMode: "view",
       keypairPath,
+      databaseUrl: TEST_DATABASE_URL,
     };
-    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" });
+    const desk = new LiveDesk(liveConfig, { network: "devnet", jwt: "x", apiToken: "x" }, loadPolicy(), createInMemoryLiveStore());
     desks.push(desk);
     const api = createApiServer(desk, liveConfig);
     const apiPort = await bind(api);

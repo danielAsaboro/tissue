@@ -13,6 +13,7 @@ export interface LiveConfig {
   readonly rpcUrl: string;
   readonly anchorMode: "view" | "transaction";
   readonly keypairPath?: string;
+  readonly databaseUrl: string;
 }
 
 function requiredUrl(name: string, fallback: string): string {
@@ -60,6 +61,12 @@ export function loadLiveConfig(): LiveConfig {
     throw new Error(`TISSUE_ANCHOR_MODE must be view or transaction; received ${JSON.stringify(anchorModeRaw)}`);
   }
   const keypairPath = process.env.TISSUE_KEYPAIR_PATH;
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error(
+      "DATABASE_URL is required for the daemon (Postgres-backed decision ledger, corpus, and proof evidence).",
+    );
+  }
   return {
     mode: "live",
     network,
@@ -70,6 +77,7 @@ export function loadLiveConfig(): LiveConfig {
     rpcUrl,
     anchorMode: anchorModeRaw,
     ...(keypairPath ? { keypairPath } : {}),
+    databaseUrl,
   };
 }
 

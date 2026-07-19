@@ -1,10 +1,7 @@
-import { createServer, type Server, type ServerResponse } from "node:http";
-import { join } from "node:path";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { LiveConfig } from "../runtime/config.js";
 import type { LiveDesk } from "../runtime/liveDesk.js";
-import { CORPUS_DIR, readCorpus } from "../ingest/corpus.js";
 import { loadPolicy } from "../config/policy.js";
-import { loadAllPolicySnapshots } from "../config/policySnapshot.js";
 import { runArena, summarizeArena } from "../arena/arena.js";
 import { runAblationMatrix } from "../arena/ablation.js";
 import { renderGradeCardSvg } from "../grader/gradeCard.js";
@@ -73,6 +70,12 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
     for (const client of sseClients) client.write(": heartbeat\n\n");
   }, SSE_HEARTBEAT_MS);
   const server = createServer((req, res) => {
+    void handleRequest(req, res).catch((error: unknown) => {
+      if (res.headersSent) { res.destroy(); return; }
+      json(res, 500, { error: "internal_error", detail: error instanceof Error ? error.message : String(error) });
+    });
+  });
+  async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const origin = req.headers.origin;
     if (origin && config.allowedOrigins.includes(origin)) {
       res.setHeader("access-control-allow-origin", origin);
@@ -197,16 +200,13 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       }
       let corpus;
       try {
-        corpus = readCorpus(fixtureId);
+        corpus = await desk.readLiveTape(fixtureId);
+        if (corpus.length === 0) throw new Error(`no corpus for fixture ${fixtureId}`);
       } catch {
         json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
         return;
       }
-      if (corpus.length === 0) {
-        json(res, 200, { available: false, reason: `fixture ${fixtureId} has no messages yet` });
-        return;
-      }
-      // On-demand — the SAME deterministic engine run over the SAME authoritative corpus the
+// On-demand — the SAME deterministic engine run over the SAME authoritative corpus the
       // live desk already captured; not a second continuously-running live session.
       const arena = runArena(corpus, loadPolicy(), snapshot.network);
       json(res, 200, { available: true, ...summarizeArena(arena) });
@@ -220,16 +220,13 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       }
       let corpus;
       try {
-        corpus = readCorpus(fixtureId);
+        corpus = await desk.readLiveTape(fixtureId);
+        if (corpus.length === 0) throw new Error(`no corpus for fixture ${fixtureId}`);
       } catch {
         json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
         return;
       }
-      if (corpus.length === 0) {
-        json(res, 200, { available: false, reason: `fixture ${fixtureId} has no messages yet` });
-        return;
-      }
-      // Same on-demand, authoritative-corpus discipline as /arena — each regime graded
+// Same on-demand, authoritative-corpus discipline as /arena — each regime graded
       // against the SAME neutralized baseline, isolating which flagged heuristic earns its
       // keep instead of only reporting the bundled effect.
       const matrix = runAblationMatrix(corpus, loadPolicy(), snapshot.network);
@@ -244,16 +241,13 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       }
       let corpus;
       try {
-        corpus = readCorpus(fixtureId);
+        corpus = await desk.readLiveTape(fixtureId);
+        if (corpus.length === 0) throw new Error(`no corpus for fixture ${fixtureId}`);
       } catch {
         json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
         return;
       }
-      if (corpus.length === 0) {
-        json(res, 200, { available: false, reason: `fixture ${fixtureId} has no messages yet` });
-        return;
-      }
-      const result = runEngine(corpus, loadPolicy(), snapshot.network);
+const result = runEngine(corpus, loadPolicy(), snapshot.network);
       const sheet = grade(result, loadPolicy());
       svg(res, renderGradeCardSvg({
         fixtureId,
@@ -304,7 +298,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       return;
     }
     if (url.pathname === "/policy/snapshots") {
-      json(res, 200, { snapshots: loadAllPolicySnapshots(join(CORPUS_DIR, "policy-snapshots.jsonl")) });
+      json(res, 200, { snapshots: await desk.readPolicySnapshots() });
       return;
     }
     if (url.pathname === "/metrics") {
@@ -361,7 +355,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       error: "not_found",
       available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
     });
-  });
+  }
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
   server.keepAliveTimeout = 5_000;

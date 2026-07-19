@@ -1,13 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { marketKeyString, type AnalystExport, type DecisionRecord, type FeedMessage } from "@tissue/shared";
 import { loadTissueSlipConfig, type TissueSlipConfig } from "@tissue/slip";
 import { loadPolicy, type Policy } from "../config/policy.js";
-import { appendToCorpus, CORPUS_DIR, readCorpus } from "../ingest/corpus.js";
+import { CORPUS_DIR } from "../ingest/corpus.js";
 import { fetchGuestJwt, type AuthCredentials } from "../ingest/txlineAuth.js";
 import { SseClient, type StreamKind } from "../ingest/sseClient.js";
 import { grade } from "../grader/grader.js";
-import { readLedgerJsonl, verifyChain } from "../ledger/ledger.js";
+import { verifyChain } from "../ledger/ledger.js";
 import { createEngineSession, type EngineResult, type EngineSession } from "../replay/engine.js";
 import type { LiveConfig } from "./config.js";
 import type { DeskSnapshot, FixtureSnapshot, StreamState } from "./types.js";
@@ -18,9 +18,10 @@ import { isCheckpointDue, prepareCheckpointAnchor, submitCheckpointAnchor, type 
 import { SlipVenueAdapter } from "../exec/slipVenue.js";
 import { executeThroughVenue, failedVenueEvidence, type VenueAdapter, type VenueExecutionEvidence, type VenueTradeCandidate } from "../exec/venue.js";
 import { loadLedgerSigner, type LedgerSigner } from "../ledger/signing.js";
-import { recordPolicySnapshot } from "../config/policySnapshot.js";
+import { hashPolicy, type PolicySnapshotEntry } from "../config/policySnapshot.js";
 import { DEFAULT_LATENCY_BUCKETS_MS, LatencyHistogram } from "./latencyHistogram.js";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { createPostgresLiveStore, type LiveStore } from "../storage/liveStore.js";
 
 type Listener = (snapshot: DeskSnapshot) => void;
 
@@ -32,15 +33,14 @@ export function admittedSourceMessage(message: FeedMessage): FeedMessage {
   return { ...message, possession: { home: "none", away: "none" } };
 }
 
-export function assertPersistedLedgerPrefix(fixtureId: string, rebuilt: EngineResult): void {
-  const ledgerPath = join(CORPUS_DIR, `${fixtureId}.ledger.jsonl`);
-  if (!existsSync(ledgerPath)) return;
+export async function assertPersistedLedgerPrefix(fixtureId: string, rebuilt: EngineResult, store: LiveStore): Promise<void> {
   let persisted;
   try {
-    persisted = readLedgerJsonl(ledgerPath);
+    persisted = await store.readDecisions(fixtureId);
   } catch (error) {
     throw new Error(`persisted ledger for ${fixtureId} is unreadable: ${error instanceof Error ? error.message : String(error)}`);
   }
+  if (persisted.length === 0) return;
   if (!verifyChain(persisted).ok) throw new Error(`persisted ledger hash chain is broken for ${fixtureId}`);
   const rebuiltRecords = rebuilt.ledger.all();
   if (persisted.length > rebuiltRecords.length) {
@@ -54,15 +54,10 @@ export function assertPersistedLedgerPrefix(fixtureId: string, rebuilt: EngineRe
 }
 
 /** Complete only the missing deterministic suffix after a corpus-first crash. */
-export function reconcilePersistedLedger(fixtureId: string, rebuilt: EngineResult): void {
-  const path = join(CORPUS_DIR, `${fixtureId}.ledger.jsonl`);
-  if (!existsSync(path)) {
-    rebuilt.ledger.writeJsonl(path);
-    return;
-  }
-  const persistedLength = readLedgerJsonl(path).length;
+export async function reconcilePersistedLedger(fixtureId: string, rebuilt: EngineResult, store: LiveStore): Promise<void> {
+  const persistedLength = (await store.readDecisions(fixtureId)).length;
   for (const record of rebuilt.ledger.all().slice(persistedLength)) {
-    rebuilt.ledger.appendJsonl(path, record);
+    await store.appendDecision(fixtureId, record);
   }
 }
 
@@ -155,13 +150,17 @@ export class LiveDesk {
   private walletBalanceCheckedAt: number | null = null;
   private walletBalanceTimer: ReturnType<typeof setInterval> | undefined;
 
+  private readonly store: LiveStore;
+
   constructor(
     private readonly config: LiveConfig,
     credentials: AuthCredentials,
     policy: Policy = loadPolicy(),
+    store: LiveStore = createPostgresLiveStore(config.databaseUrl),
   ) {
     this.credentials = credentials;
     this.policy = policy;
+    this.store = store;
     this.signer = loadLedgerSigner(config.keypairPath);
     const slipConfig: TissueSlipConfig | null = loadTissueSlipConfig();
     this.venueAdapters = slipConfig && policy.exec.slip.enabled
@@ -192,11 +191,11 @@ export class LiveDesk {
   }
 
   async start(): Promise<void> {
-    recordPolicySnapshot(this.policy, join(CORPUS_DIR, "policy-snapshots.jsonl"), this.signer);
-    this.loadAnchorEvidence();
-    this.loadPreMatchCommitments();
-    this.loadCheckpoints();
-    this.loadVenueExecutions();
+    await this.recordPolicySnapshot();
+    await this.loadAnchorEvidence();
+    await this.loadPreMatchCommitments();
+    await this.loadCheckpoints();
+    await this.loadVenueExecutions();
     if (this.venueAdapters.length > 0) {
       this.reconcileVenueLifecycles();
       this.venueLifecycleTimer = setInterval(
@@ -238,6 +237,7 @@ export class LiveDesk {
     if (this.venueLifecycleTimer) clearInterval(this.venueLifecycleTimer);
     for (const client of this.clients) client.stop();
     await Promise.all(this.clientLoops);
+    await this.store.close();
   }
 
   /** Real getBalance() RPC call against the anchoring keypair. Failures are logged and
@@ -275,6 +275,17 @@ export class LiveDesk {
 
   getCheckpoints(fixtureId: string): readonly CheckpointAnchorEvidence[] {
     return this.checkpoints.get(fixtureId) ?? [];
+  }
+
+  /** Durable live corpus for a fixture — used by /arena, /arena/ablation, /grade-card.svg to
+   *  re-run the deterministic engine on demand against the SAME authoritative record this
+   *  desk captured (not the in-memory tape, which caps replay only to what's still resident). */
+  readLiveTape(fixtureId: string): Promise<FeedMessage[]> {
+    return this.store.readLiveTape(fixtureId);
+  }
+
+  readPolicySnapshots(): Promise<readonly PolicySnapshotEntry[]> {
+    return this.store.readAllPolicySnapshotRows();
   }
 
   snapshot(): DeskSnapshot {
@@ -377,12 +388,12 @@ export class LiveDesk {
       this.assertAppendOnly(message.fixtureId, previousLength, previousHeadHash, result);
       // Corpus is authoritative. If the process dies after this append, startup rebuilds the
       // exact missing ledger suffix before accepting another message.
-      appendToCorpus(message.fixtureId, message);
+      await this.store.appendLiveMessage(message.fixtureId, message);
       tape.push(message);
       messageIds.add(message.msgId);
       const record = result.ledger.all().at(-1);
       if (!record) throw new Error(`engine produced no decision for ${message.fixtureId}`);
-      result.ledger.appendJsonl(join(CORPUS_DIR, `${message.fixtureId}.ledger.jsonl`), record);
+      await this.store.appendDecision(message.fixtureId, record);
       this.results.set(message.fixtureId, result);
       this.activeFixtureId = message.fixtureId;
       this.writeAnalystExport(message.fixtureId, result);
@@ -392,7 +403,7 @@ export class LiveDesk {
       this.maybeExecuteVenues(message.fixtureId, record);
     } catch (error) {
       // The session mutates before durable writes. Discard every derived in-memory view so a
-      // subsequent attempt must rebuild from the authoritative on-disk corpus and ledger.
+      // subsequent attempt must rebuild from the authoritative persisted corpus and ledger.
       this.sessions.delete(message.fixtureId);
       this.results.delete(message.fixtureId);
       this.tapes.delete(message.fixtureId);
@@ -409,7 +420,7 @@ export class LiveDesk {
   private async loadTape(fixtureId: string): Promise<FeedMessage[]> {
     const loaded = this.tapes.get(fixtureId);
     if (loaded) return loaded;
-    const tape = existsSync(join(CORPUS_DIR, `${fixtureId}.jsonl`)) ? readCorpus(fixtureId) : [];
+    const tape = (await this.store.liveTapeExists(fixtureId)) ? await this.store.readLiveTape(fixtureId) : [];
     const session = createEngineSession(this.policy, this.config.network, {
       feedGapHalt: true,
       simulateFills: false,
@@ -424,7 +435,7 @@ export class LiveDesk {
         messageIds.add(existing.msgId);
         const evidence = await this.verifySource(existing, true);
         this.anchorEvidence.set(existing.msgId, evidence);
-        this.persistAnchorEvidence(evidence);
+        await this.persistAnchorEvidence(evidence);
         if (!evidence.result) {
           throw new Error(
             `persisted corpus ${fixtureId} source proof ${existing.msgId} failed fresh verification: ${evidence.error ?? evidence.status}`,
@@ -433,8 +444,8 @@ export class LiveDesk {
       }
       for (const message of tape) session.append(message);
       const rebuilt = session.current();
-      assertPersistedLedgerPrefix(fixtureId, rebuilt);
-      reconcilePersistedLedger(fixtureId, rebuilt);
+      await assertPersistedLedgerPrefix(fixtureId, rebuilt, this.store);
+      await reconcilePersistedLedger(fixtureId, rebuilt, this.store);
       this.results.set(fixtureId, rebuilt);
       this.activeFixtureId ??= fixtureId;
     }
@@ -576,7 +587,7 @@ export class LiveDesk {
       this.proofVerificationLatencyMs.observe(Date.now() - verifyStart);
       this.anchorEvidence.set(message.msgId, evidence);
       this.pendingAnchorIds.delete(message.msgId);
-      this.persistAnchorEvidence(evidence);
+      await this.persistAnchorEvidence(evidence);
       if (evidence.result) {
         this.proofErrors.delete(message.msgId);
         this.recordProofOutcome(true);
@@ -637,28 +648,22 @@ export class LiveDesk {
     });
   }
 
-  private loadAnchorEvidence(): void {
-    const legacyPath = join(CORPUS_DIR, "anchor-evidence.json");
-    const journalPath = join(CORPUS_DIR, "anchor-evidence.jsonl");
-    const rows: unknown[] = [];
-    if (existsSync(legacyPath)) {
-      try {
-        const parsed = JSON.parse(readFileSync(legacyPath, "utf8")) as unknown;
-        if (!Array.isArray(parsed)) throw new Error("legacy evidence must be a JSON array");
-        rows.push(...parsed);
-      } catch (error) {
-        throw new Error(`anchor evidence is unreadable: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    if (existsSync(journalPath)) {
-      try {
-        for (const line of readFileSync(journalPath, "utf8").split("\n")) {
-          if (line.trim()) rows.push(JSON.parse(line) as unknown);
-        }
-      } catch (error) {
-        throw new Error(`anchor evidence journal is unreadable: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
+  /** Appends a new signed policy snapshot only when the policy's canonical hash differs from
+   *  the last recorded one — see config/policySnapshot.ts for why this is hashed and signed. */
+  private async recordPolicySnapshot(): Promise<void> {
+    const policyHash = hashPolicy(this.policy);
+    const last = await this.store.readLastPolicySnapshotRow();
+    if (last && last.policyHash === policyHash) return;
+    const entry: PolicySnapshotEntry = {
+      recordedAt: Date.now(),
+      policyHash,
+      ...(this.signer ? { signature: this.signer.sign(policyHash), signerPubkey: this.signer.publicKey } : {}),
+    };
+    await this.store.appendPolicySnapshotRow(entry);
+  }
+
+  private async loadAnchorEvidence(): Promise<void> {
+    const rows = await this.store.readAllAnchorEvidenceRows();
     for (const value of rows) {
       const evidence = value as Partial<AnchorEvidence>;
       if (
@@ -685,24 +690,19 @@ export class LiveDesk {
     this.refreshError();
   }
 
-  private persistAnchorEvidence(evidence: AnchorEvidence): void {
-    mkdirSync(CORPUS_DIR, { recursive: true });
-    appendFileSync(join(CORPUS_DIR, "anchor-evidence.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+  private async persistAnchorEvidence(evidence: AnchorEvidence): Promise<void> {
+    await this.store.appendAnchorEvidenceRow(evidence);
   }
 
-  private loadPreMatchCommitments(): void {
-    const path = join(CORPUS_DIR, "pre-match-commitments.jsonl");
-    if (!existsSync(path)) return;
-    for (const line of readFileSync(path, "utf8").split("\n")) {
-      if (!line.trim()) continue;
-      const evidence = JSON.parse(line) as PreMatchCommitmentEvidence;
+  private async loadPreMatchCommitments(): Promise<void> {
+    const rows = await this.store.readAllPreMatchCommitmentRows();
+    for (const evidence of rows) {
       if (evidence.network === this.config.network) this.preMatchCommitments.set(evidence.fixtureId, evidence);
     }
   }
 
-  private persistPreMatchCommitment(evidence: PreMatchCommitmentEvidence): void {
-    mkdirSync(CORPUS_DIR, { recursive: true });
-    appendFileSync(join(CORPUS_DIR, "pre-match-commitments.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+  private async persistPreMatchCommitment(evidence: PreMatchCommitmentEvidence): Promise<void> {
+    await this.store.appendPreMatchCommitmentRow(evidence);
   }
 
   /**
@@ -724,7 +724,7 @@ export class LiveDesk {
       });
       this.pendingCommitmentIds.delete(fixtureId);
       this.preMatchCommitments.set(fixtureId, evidence);
-      this.persistPreMatchCommitment(evidence);
+      await this.persistPreMatchCommitment(evidence);
       if (evidence.status === "failed") {
         console.error(JSON.stringify({ event: "tissue.pre_match_commitment_failed", fixtureId, error: evidence.error }));
       }
@@ -733,12 +733,9 @@ export class LiveDesk {
     });
   }
 
-  private loadCheckpoints(): void {
-    const path = join(CORPUS_DIR, "checkpoint-anchors.jsonl");
-    if (!existsSync(path)) return;
-    for (const line of readFileSync(path, "utf8").split("\n")) {
-      if (!line.trim()) continue;
-      const evidence = JSON.parse(line) as CheckpointAnchorEvidence;
+  private async loadCheckpoints(): Promise<void> {
+    const rows = await this.store.readAllCheckpointRows();
+    for (const evidence of rows) {
       if (evidence.network !== this.config.network) continue;
       const existing = this.checkpoints.get(evidence.fixtureId) ?? [];
       existing.push(evidence);
@@ -748,9 +745,8 @@ export class LiveDesk {
     }
   }
 
-  private persistCheckpoint(evidence: CheckpointAnchorEvidence): void {
-    mkdirSync(CORPUS_DIR, { recursive: true });
-    appendFileSync(join(CORPUS_DIR, "checkpoint-anchors.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+  private async persistCheckpoint(evidence: CheckpointAnchorEvidence): Promise<void> {
+    await this.store.appendCheckpointRow(evidence);
   }
 
   /**
@@ -779,7 +775,7 @@ export class LiveDesk {
       const existing = this.checkpoints.get(fixtureId) ?? [];
       existing.push(evidence);
       this.checkpoints.set(fixtureId, existing);
-      this.persistCheckpoint(evidence);
+      await this.persistCheckpoint(evidence);
       if (evidence.status === "failed") {
         console.error(JSON.stringify({ event: "tissue.checkpoint_anchor_failed", fixtureId, seq, error: evidence.error }));
       }
@@ -788,36 +784,15 @@ export class LiveDesk {
     });
   }
 
-  private loadVenueExecutions(): void {
-    // Read the retired Slip-specific journal once for migration, then let the generic journal
-    // win by execution identity. Raw evidence is never rewritten or deleted.
-    for (const filename of ["slip-executions.jsonl", "venue-executions.jsonl"]) {
-      const path = join(CORPUS_DIR, filename);
-      if (!existsSync(path)) continue;
-      for (const line of readFileSync(path, "utf8").split("\n")) {
-        if (!line.trim()) continue;
-        const parsed = JSON.parse(line) as VenueExecutionEvidence & {
-          market?: string;
-          ticket?: string;
-          buyTxSig?: string;
-          resolveTxSig?: string;
-        };
-        const evidence: VenueExecutionEvidence = {
-          ...parsed,
-          venue: parsed.venue ?? "slip",
-          ...((parsed.venueMarketId ?? parsed.market) ? { venueMarketId: parsed.venueMarketId ?? parsed.market } : {}),
-          ...((parsed.venuePositionId ?? parsed.ticket) ? { venuePositionId: parsed.venuePositionId ?? parsed.ticket } : {}),
-          ...((parsed.submissionTxSig ?? parsed.buyTxSig) ? { submissionTxSig: parsed.submissionTxSig ?? parsed.buyTxSig } : {}),
-          ...((parsed.settlementTxSig ?? parsed.resolveTxSig) ? { settlementTxSig: parsed.settlementTxSig ?? parsed.resolveTxSig } : {}),
-        };
-        this.upsertVenueExecution(evidence);
-      }
+  private async loadVenueExecutions(): Promise<void> {
+    const rows = await this.store.readAllVenueExecutionRows();
+    for (const evidence of rows) {
+      this.upsertVenueExecution(evidence);
     }
   }
 
-  private persistVenueExecution(evidence: VenueExecutionEvidence): void {
-    mkdirSync(CORPUS_DIR, { recursive: true });
-    appendFileSync(join(CORPUS_DIR, "venue-executions.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+  private async persistVenueExecution(evidence: VenueExecutionEvidence): Promise<void> {
+    await this.store.appendVenueExecutionRow(evidence);
   }
 
   private upsertVenueExecution(evidence: VenueExecutionEvidence): void {
@@ -842,13 +817,13 @@ export class LiveDesk {
       for (const [fixtureId, executions] of this.venueExecutions) {
         let terminal: Extract<FeedMessage, { kind: "score" }> | undefined;
         try {
-          terminal = readCorpus(fixtureId)
+          terminal = (await this.store.readLiveTape(fixtureId))
             .filter((message): message is Extract<FeedMessage, { kind: "score" }> => message.kind === "score")
             .filter((message) => message.isFinal || message.isVoid)
             .at(-1);
         } catch {
           // A confirmed ticket can still be claimed/refunded from canonical Slip state even if
-          // its local TxLINE corpus is temporarily unavailable; resolution itself will wait.
+          // its persisted TxLINE corpus is temporarily unavailable; resolution itself will wait.
         }
         for (const evidence of [...executions]) {
           if (evidence.status !== "confirmed") continue;
@@ -858,7 +833,7 @@ export class LiveDesk {
           const updated = await adapter.reconcile(evidence, terminal);
           if (JSON.stringify(updated) !== JSON.stringify(evidence)) {
             this.upsertVenueExecution(updated);
-            this.persistVenueExecution(updated);
+            await this.persistVenueExecution(updated);
             if (updated.lifecycleStatus === "attention-required") {
               console.error(JSON.stringify({
                 event: "tissue.venue_lifecycle_attention_required",
@@ -929,7 +904,10 @@ export class LiveDesk {
           error: reason,
         };
         this.upsertVenueExecution(evidence);
-        this.persistVenueExecution(evidence);
+        // Rejected-by-gate evidence is informational (no capital moved) — persisted through the
+        // same serialized queue as everything else venue-related rather than blocking this
+        // synchronous authorization pass on a database round-trip.
+        this.venueQueue = this.venueQueue.catch(() => undefined).then(() => this.persistVenueExecution(evidence));
       }
       if (decision.approved.length === 0) continue;
       this.venueQueue = this.venueQueue.catch(() => undefined).then(async () => {
@@ -947,7 +925,7 @@ export class LiveDesk {
             evidence = failedVenueEvidence(adapter.id, request, error instanceof Error ? error.message : String(error));
           }
           this.upsertVenueExecution(evidence);
-          this.persistVenueExecution(evidence);
+          await this.persistVenueExecution(evidence);
           if (evidence.status === "failed") {
             console.error(JSON.stringify({ event: "tissue.venue_execution_failed", venue: adapter.id, fixtureId, seq: record.seq, error: evidence.error }));
           }
