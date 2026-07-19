@@ -45,7 +45,7 @@ export function AnalystPanel() {
         </button>
       </div>
 
-      <div className="controls" style={{ flexWrap: "wrap" }}>
+      <div className="controls" style={{ flexWrap: "wrap", marginTop: "var(--spacing-12)" }}>
         {SUGGESTIONS.map((s) => (
           <button key={s} className="chip" onClick={() => ask(s)} disabled={pending}>
             {s}
