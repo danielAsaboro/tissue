@@ -7,6 +7,7 @@
     "start": "tsx src/main.ts",
     "activate:devnet": "tsx scripts/liveActivate.ts",
     "capture:corpus": "tsx scripts/captureCorpus.ts",
+    "capture:worldcup": "tsx scripts/captureAllWorldCup.ts",
     "drill:restart": "node scripts/restartDrill.mjs",
     "drill:streamdrop": "node scripts/streamDropDrill.mjs",
     "seed-replay-fixture": "tsx src/ingest/seedCorpus.ts",
