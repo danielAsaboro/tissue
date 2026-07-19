@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     await Promise.all(batch.map(async (fixtureId) => {
       const messages: FeedMessage[] = readCorpusFile(join(archiveDir, `${fixtureId}.jsonl`));
       if (messages.length === 0) return;
-      const rows = messages.map((message) => ({ kind: "corpus_message", fixture_id: fixtureId, payload: message }));
+      const rows: Record<string, unknown>[] = messages.map((message) => ({ kind: "corpus_message", fixture_id: fixtureId, payload: message }));
       await sql`insert into tissue_events ${sql(rows, "kind", "fixture_id", "payload")}`;
       fixturesWritten += 1;
       messagesWritten += messages.length;

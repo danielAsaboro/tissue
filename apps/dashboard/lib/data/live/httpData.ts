@@ -137,7 +137,28 @@ export class HttpDashboardData implements DashboardData {
     if (!response.ok) {
       throw new DashboardUnavailableError(`The Tissue daemon returned HTTP ${response.status}.`);
     }
-    return (await response.json()) as ApiState;
+    const state = (await response.json()) as ApiState;
+    if (state.fixtures.length > 0) return state;
+    // Nothing live right now — fall back to any real fixture (backtest archive included) so
+    // Decisions/Quotes/Grade/Radar show Tissue's actual track record instead of an empty
+    // state. /state stays authoritative about desk status (halted/error/etc.); only the
+    // fixture data merges in.
+    const fallback = await this.fixtureFallback();
+    return fallback ? { ...state, activeFixtureId: fallback.fixtureId, fixtures: [fallback] } : state;
+  }
+
+  private async fixtureFallback(): Promise<ApiFixture | null> {
+    try {
+      const response = await fetch(`${this.baseUrl}/fixture`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { available: boolean } & Partial<ApiFixture>;
+      return body.available ? (body as ApiFixture) : null;
+    } catch {
+      return null;
+    }
   }
 
   private active(state: ApiState): ApiFixture | null {

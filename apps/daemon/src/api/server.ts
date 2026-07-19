@@ -8,6 +8,7 @@ import { renderGradeCardSvg } from "../grader/gradeCard.js";
 import { buildBacktestTimeline, grade } from "../grader/grader.js";
 import { runEngine } from "../replay/engine.js";
 import { buildMerkleTree, merkleProof } from "../ledger/merkle.js";
+import { verifyChain } from "../ledger/ledger.js";
 import { PROGRAM_ID } from "../exec/anchor.js";
 
 const MAX_SSE_CLIENTS = 100;
@@ -193,9 +194,10 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       return;
     }
     if (url.pathname === "/arena") {
-      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId
+        ?? (await desk.listFixtureIds())[0];
       if (!fixtureId) {
-        json(res, 200, { available: false, reason: "no active fixture yet" });
+        json(res, 200, { available: false, reason: "no fixture data available yet" });
         return;
       }
       let corpus;
@@ -213,9 +215,10 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       return;
     }
     if (url.pathname === "/arena/ablation") {
-      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId
+        ?? (await desk.listFixtureIds())[0];
       if (!fixtureId) {
-        json(res, 200, { available: false, reason: "no active fixture yet" });
+        json(res, 200, { available: false, reason: "no fixture data available yet" });
         return;
       }
       let corpus;
@@ -262,10 +265,63 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       json(res, 200, { available: true, ...timeline });
       return;
     }
-    if (url.pathname === "/grade-card.svg") {
-      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+    if (url.pathname === "/fixture") {
+      // Decisions/quotes/radar/grade for ANY fixture this store has a corpus for, computed
+      // on demand — same discipline as /arena and /backtest. The dashboard's other pages
+      // (Decisions, Quotes, Grade, Radar) are normally driven by /state's live in-memory
+      // fixture list, which is empty whenever nothing is live; this lets them fall back to a
+      // real fixture (backtest archive included) instead of an empty state, same fallback
+      // rule as /backtest. anchors/preMatchCommitment/checkpoints/venueExecutions are
+      // genuinely absent for a fixture the live desk never itself processed, not omitted.
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId
+        ?? (await desk.listFixtureIds())[0];
       if (!fixtureId) {
-        json(res, 200, { available: false, reason: "no active fixture yet" });
+        json(res, 200, { available: false, reason: "no fixture data available yet" });
+        return;
+      }
+      let corpus;
+      try {
+        corpus = await desk.readLiveTape(fixtureId);
+        if (corpus.length === 0) throw new Error(`no corpus for fixture ${fixtureId}`);
+      } catch {
+        json(res, 404, { available: false, reason: `no corpus for fixture ${fixtureId}` });
+        return;
+      }
+      const policy = loadPolicy();
+      const result = runEngine(corpus, policy, snapshot.network);
+      const records = result.ledger.all();
+      json(res, 200, {
+        available: true,
+        fixtureId,
+        decisions: records,
+        quotes: result.quotes.map((q) => ({
+          msgId: q.msgId,
+          ts: q.ts,
+          marketKey: q.marketKey,
+          selection: q.selection,
+          side: q.side,
+          quoteMilliOdds: q.quoteMilliOdds,
+          sizeUnits: q.sizeUnits,
+          sourceOddsMsgId: q.sourceOddsMsgId,
+          matched: q.matched,
+        })),
+        radarEvents: result.radarEvents,
+        grade: grade(result, policy),
+        headHash: result.ledger.headHash,
+        hashChainOk: verifyChain(records).ok,
+        finalScore: result.finalScore,
+        anchors: [],
+        preMatchCommitment: null,
+        checkpoints: [],
+        venueExecutions: [],
+      });
+      return;
+    }
+    if (url.pathname === "/grade-card.svg") {
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId
+        ?? (await desk.listFixtureIds())[0];
+      if (!fixtureId) {
+        json(res, 200, { available: false, reason: "no fixture data available yet" });
         return;
       }
       let corpus;
@@ -382,7 +438,7 @@ const result = runEngine(corpus, loadPolicy(), snapshot.network);
     }
     json(res, 404, {
       error: "not_found",
-      available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/backtest", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
+      available: ["/health", "/ready", "/state", "/verify", "/record", "/arena", "/arena/ablation", "/backtest", "/fixture", "/grade-card.svg", "/ledger/proof", "/policy/snapshots", "/metrics", "/events"],
     });
   }
   server.requestTimeout = 15_000;
