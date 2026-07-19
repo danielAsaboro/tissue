@@ -284,6 +284,12 @@ export class LiveDesk {
     return this.store.readLiveTape(fixtureId);
   }
 
+  /** Every fixture this store has any corpus for — live-desk-processed or backtest-archive
+   *  backfilled — so /backtest can serve a real fixture even when nothing is live right now. */
+  listFixtureIds(): Promise<string[]> {
+    return this.store.listFixtureIds();
+  }
+
   readPolicySnapshots(): Promise<readonly PolicySnapshotEntry[]> {
     return this.store.readAllPolicySnapshotRows();
   }

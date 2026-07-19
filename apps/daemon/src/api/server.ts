@@ -234,9 +234,14 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
       return;
     }
     if (url.pathname === "/backtest") {
-      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId;
+      // Unlike /arena (deliberately tied to the live fixture), the scoreboard should read as
+      // "Tissue's real track record," not "empty because nothing is live right now" — so with
+      // no explicit fixtureId and nothing currently active, fall back to any real fixture this
+      // store has a corpus for (backtest archive included) rather than reporting unavailable.
+      const fixtureId = url.searchParams.get("fixtureId") ?? snapshot.activeFixtureId
+        ?? (await desk.listFixtureIds())[0];
       if (!fixtureId) {
-        json(res, 200, { available: false, reason: "no active fixture yet" });
+        json(res, 200, { available: false, reason: "no fixture data available yet" });
         return;
       }
       let corpus;
