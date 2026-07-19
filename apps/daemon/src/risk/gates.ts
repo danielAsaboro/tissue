@@ -3,6 +3,7 @@ import {
   type ExposureSnapshot,
   type HaltSignal,
   type MarketKey,
+  type Selection,
   marketKeyString,
 } from "@tissue/shared";
 import type { Policy } from "../config/policy.js";
@@ -120,4 +121,71 @@ export function evaluateRisk(
   }
 
   return { killed: false, halts, approved, rejected, flags };
+}
+
+/**
+ * A second, stricter authorization on top of evaluateRisk above. Candidates here have
+ * already cleared the quote-publication gate (drawdown, feed, halts, exposure caps) — this
+ * decides which of THOSE are also allowed to risk real capital on Slip (exec/slipExec.ts).
+ * Publishing a recommendation and signing a transaction that spends funds are not the same
+ * risk decision, hence a separate, deliberately higher edge bar and its own exposure caps.
+ * Pure: no I/O, no signing — the same discipline as evaluateRisk above.
+ */
+
+export interface SlipTradeCandidate {
+  readonly marketKey: MarketKey;
+  readonly selection: Selection;
+  readonly sizeUnits: number;
+  readonly edgeBps: number;
+}
+
+export interface SlipExecutionContext {
+  /** Distinct Slip markets with an unresolved Tissue position right now. */
+  readonly openMarketCount: number;
+  /** Aggregate units already staked across every open Slip position. */
+  readonly totalStakedUnits: number;
+}
+
+export interface SlipExecutionDecision {
+  readonly approved: SlipTradeCandidate[];
+  readonly rejected: { candidate: SlipTradeCandidate; reason: string }[];
+}
+
+export function evaluateSlipExecution(
+  candidates: readonly SlipTradeCandidate[],
+  ctx: SlipExecutionContext,
+  policy: Policy,
+): SlipExecutionDecision {
+  const cfg = policy.exec.slip;
+  if (!cfg.enabled) {
+    return { approved: [], rejected: candidates.map((candidate) => ({ candidate, reason: "slip-execution-disabled" })) };
+  }
+  const approved: SlipTradeCandidate[] = [];
+  const rejected: { candidate: SlipTradeCandidate; reason: string }[] = [];
+  let openMarkets = ctx.openMarketCount;
+  let totalStaked = ctx.totalStakedUnits;
+
+  for (const candidate of candidates) {
+    if (Math.abs(candidate.edgeBps) < cfg.min_edge_bps_to_execute) {
+      rejected.push({ candidate, reason: "edge-below-slip-threshold" });
+      continue;
+    }
+    if (candidate.sizeUnits > cfg.max_stake_units_per_market) {
+      rejected.push({ candidate, reason: "stake-exceeds-per-market-cap" });
+      continue;
+    }
+    if (openMarkets + 1 > cfg.max_concurrent_markets) {
+      rejected.push({ candidate, reason: "max-concurrent-markets" });
+      continue;
+    }
+    if (totalStaked + candidate.sizeUnits > cfg.max_total_exposure_units) {
+      rejected.push({ candidate, reason: "total-exposure-cap" });
+      continue;
+    }
+    openMarkets += 1;
+    totalStaked += candidate.sizeUnits;
+    approved.push(candidate);
+  }
+
+  return { approved, rejected };
 }

@@ -6,6 +6,7 @@ import {
   BinaryOp,
   CREATE_MARKET_DISCRIMINATOR,
   MarketState,
+  SettlementMode,
   SideSelector,
   getMarketEncoder,
 } from "@slip/sdk/generated";
@@ -72,6 +73,7 @@ beforeAll(async () => {
     mint: MINT,
     expression: {
       fixtureId: 18_209_181n,
+      settlementMode: SettlementMode.Terminal,
       period: 100,
       statAKey: 1,
       statASide: SideSelector.Home,
@@ -93,6 +95,7 @@ beforeAll(async () => {
     tipBps: 20,
     state: MarketState.Open,
     winningOutcome: null,
+    resolutionCandidate: null,
     createdAt: 1_999_000_000n,
     resolvedTs: 0n,
     ticketCount: 2,

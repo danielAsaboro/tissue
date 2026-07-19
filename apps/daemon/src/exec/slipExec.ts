@@ -4,7 +4,6 @@ import { PublicKey } from "@solana/web3.js";
 import { AccountRole, type Instruction } from "@solana/kit";
 import { TissueSlipConsumer, type TissueSlipConfig } from "@tissue/slip";
 import type { MarketKey, Selection } from "@tissue/shared";
-import type { QuoteProposal } from "../strategy/strategy.js";
 import { isConfirmedSignature, loadKeypair } from "./anchorLive.js";
 
 /**
@@ -166,12 +165,16 @@ export interface SlipExecOptions {
   readonly voidWindowMs?: number;
 }
 
-export type SlipExecStatus = "confirmed" | "failed" | "skipped-no-edge-venue";
+export type SlipExecStatus = "confirmed" | "failed" | "rejected-by-gate";
 
 export interface SlipExecutionEvidence {
   readonly fixtureId: string;
+  /** The decision (ledger seq) whose intent this evidence traces back to. */
+  readonly decisionSeq: number;
   readonly marketKey: MarketKey;
   readonly selection: Selection;
+  readonly edgeBps: number;
+  readonly sizeUnits: number;
   readonly outcomeIndex: number;
   readonly stakeAmount: string;
   readonly status: SlipExecStatus;
@@ -191,16 +194,28 @@ export function stakeUnitsToAmount(sizeUnits: number): bigint {
   return BigInt(Math.max(0, Math.round(sizeUnits * 1_000_000)));
 }
 
+/** The only fields executeSlipBuy actually needs — satisfied structurally by both a full
+ *  QuoteProposal (replay/tests) and the ledger-derived candidates liveDesk builds from a
+ *  DecisionRecord's already risk-approved Intents. */
+export interface SlipTradeInput {
+  readonly marketKey: MarketKey;
+  readonly selection: Selection;
+  readonly sizeUnits: number;
+  readonly edgeBps: number;
+}
+
 /**
- * Turns one of Tissue's own risk-approved quote proposals into a real, signed, confirmed Slip
- * transaction: find-or-create the fixture's market for that MarketKey, then buy the outcome
- * band Tissue's edge favors. Every step submits a real transaction and waits for confirmation
- * — same evidence discipline as exec/memoAnchor.ts. Never invents a fill: a failed on-chain
- * submission is reported as failed, not silently retried into a fabricated success.
+ * Turns one of Tissue's own risk-approved trading decisions into a real, signed, confirmed
+ * Slip transaction: find-or-create the fixture's market for that MarketKey, then buy the
+ * outcome band Tissue's edge favors. Every step submits a real transaction and waits for
+ * confirmation — same evidence discipline as exec/memoAnchor.ts. Never invents a fill: a
+ * failed on-chain submission is reported as failed, not silently retried into a fabricated
+ * success.
  */
 export async function executeSlipBuy(
-  proposal: QuoteProposal,
+  proposal: SlipTradeInput,
   fixtureId: string,
+  decisionSeq: number,
   nonce: bigint,
   opts: SlipExecOptions,
 ): Promise<SlipExecutionEvidence> {
@@ -210,8 +225,11 @@ export async function executeSlipBuy(
   const stakeAmount = stakeUnitsToAmount(proposal.sizeUnits);
   const base = {
     fixtureId,
+    decisionSeq,
     marketKey: proposal.marketKey,
     selection: proposal.selection,
+    edgeBps: proposal.edgeBps,
+    sizeUnits: proposal.sizeUnits,
     outcomeIndex,
     stakeAmount: stakeAmount.toString(),
     submittedAt,

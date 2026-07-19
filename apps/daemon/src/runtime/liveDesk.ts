@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AnalystExport, FeedMessage } from "@tissue/shared";
+import type { AnalystExport, DecisionRecord, FeedMessage } from "@tissue/shared";
+import { loadTissueSlipConfig, type TissueSlipConfig } from "@tissue/slip";
 import { loadPolicy, type Policy } from "../config/policy.js";
 import { appendToCorpus, CORPUS_DIR, readCorpus } from "../ingest/corpus.js";
 import { fetchGuestJwt, type AuthCredentials } from "../ingest/txlineAuth.js";
@@ -14,6 +15,8 @@ import { verifyOddsOnChain, type AnchorEvidence } from "../exec/anchorLive.js";
 import { verifyScoreOnChain } from "../exec/scoreAnchorLive.js";
 import { submitPreMatchCommitment, type PreMatchCommitmentEvidence } from "../exec/preMatchCommit.js";
 import { isCheckpointDue, prepareCheckpointAnchor, submitCheckpointAnchor, type CheckpointAnchorEvidence } from "../exec/periodicAnchor.js";
+import { executeSlipBuy, type SlipExecutionEvidence } from "../exec/slipExec.js";
+import { evaluateSlipExecution, type SlipTradeCandidate } from "../risk/gates.js";
 import { loadLedgerSigner, type LedgerSigner } from "../ledger/signing.js";
 import { recordPolicySnapshot } from "../config/policySnapshot.js";
 import { DEFAULT_LATENCY_BUCKETS_MS, LatencyHistogram } from "./latencyHistogram.js";
@@ -111,6 +114,13 @@ export class LiveDesk {
   private readonly lastCheckpointSeq = new Map<string, number>();
   private readonly pendingCheckpointFixtureIds = new Set<string>();
   private checkpointQueue: Promise<void> = Promise.resolve();
+  /** Real capital execution on Slip — see exec/slipExec.ts and risk/gates.ts::evaluateSlipExecution.
+   *  Null (not just disabled) when TISSUE_SLIP_* env vars are unset — Slip is opt-in for Tissue,
+   *  same discipline as the analyst's Slip integration (packages/slip/src/config.ts). */
+  private readonly slipConfig: TissueSlipConfig | null = loadTissueSlipConfig();
+  private readonly slipExecutions = new Map<string, SlipExecutionEvidence[]>();
+  private readonly lastSlipSeq = new Map<string, number>();
+  private slipQueue: Promise<void> = Promise.resolve();
   private readonly pendingAnchorIds = new Set<string>();
   private readonly proofErrors = new Map<string, string>();
   private readonly securityCounters = {
@@ -162,6 +172,7 @@ export class LiveDesk {
     this.loadAnchorEvidence();
     this.loadPreMatchCommitments();
     this.loadCheckpoints();
+    this.loadSlipExecutions();
     if (this.signer) {
       void this.checkWalletBalance();
       this.walletBalanceTimer = setInterval(
@@ -346,6 +357,7 @@ export class LiveDesk {
       this.enforcePortfolioRisk();
       this.maybeSubmitPreMatchCommitment(message.fixtureId, result);
       this.maybeSubmitCheckpointAnchor(message.fixtureId, result);
+      this.maybeExecuteSlip(message.fixtureId, record);
     } catch (error) {
       // The session mutates before durable writes. Discard every derived in-memory view so a
       // subsequent attempt must rebuild from the authoritative on-disk corpus and ledger.
@@ -723,6 +735,95 @@ export class LiveDesk {
     });
   }
 
+  private loadSlipExecutions(): void {
+    const path = join(CORPUS_DIR, "slip-executions.jsonl");
+    if (!existsSync(path)) return;
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const evidence = JSON.parse(line) as SlipExecutionEvidence;
+      const existing = this.slipExecutions.get(evidence.fixtureId) ?? [];
+      existing.push(evidence);
+      this.slipExecutions.set(evidence.fixtureId, existing);
+    }
+  }
+
+  private persistSlipExecution(evidence: SlipExecutionEvidence): void {
+    mkdirSync(CORPUS_DIR, { recursive: true });
+    appendFileSync(join(CORPUS_DIR, "slip-executions.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+  }
+
+  /**
+   * Second, stricter authorization on top of the existing quote-publication risk gate
+   * (risk/gates.ts::evaluateRisk, already applied inside the engine before this record ever
+   * existed) — evaluateSlipExecution decides which of THIS decision's already-approved
+   * Intents are also cleared to risk real capital on Slip. Fires at most once per decision
+   * seq, queued through its own lane (same keypair/blockhash reasoning as the anchoring and
+   * checkpoint queues above) so concurrent fixtures never race the same nonce.
+   */
+  private maybeExecuteSlip(fixtureId: string, record: DecisionRecord): void {
+    if (!this.slipConfig || !this.policy.exec.slip.enabled) return;
+    if (record.action !== "POST" || record.intents.length === 0) return;
+    if ((this.lastSlipSeq.get(fixtureId) ?? -1) >= record.seq) return;
+    this.lastSlipSeq.set(fixtureId, record.seq);
+
+    const candidates: SlipTradeCandidate[] = record.intents.map((intent) => ({
+      marketKey: intent.marketKey,
+      selection: intent.selection,
+      sizeUnits: intent.sizeUnits,
+      edgeBps: record.edgeBps,
+    }));
+    const openForFixture = this.slipExecutions.get(fixtureId) ?? [];
+    const confirmed = openForFixture.filter((e) => e.status === "confirmed");
+    const ctx = {
+      openMarketCount: new Set(confirmed.map((e) => `${e.marketKey.market}@${e.marketKey.lineTimes10 ?? ""}`)).size,
+      totalStakedUnits: confirmed.reduce((sum, e) => sum + e.sizeUnits, 0),
+    };
+    const decision = evaluateSlipExecution(candidates, ctx, this.policy);
+    for (const { candidate, reason } of decision.rejected) {
+      const evidence: SlipExecutionEvidence = {
+        fixtureId,
+        decisionSeq: record.seq,
+        marketKey: candidate.marketKey,
+        selection: candidate.selection,
+        edgeBps: candidate.edgeBps,
+        sizeUnits: candidate.sizeUnits,
+        outcomeIndex: -1,
+        stakeAmount: "0",
+        status: "rejected-by-gate",
+        submittedAt: Date.now(),
+        error: reason,
+      };
+      const existing = this.slipExecutions.get(fixtureId) ?? [];
+      existing.push(evidence);
+      this.slipExecutions.set(fixtureId, existing);
+      this.persistSlipExecution(evidence);
+    }
+    if (decision.approved.length === 0) return;
+
+    const slipConfig = this.slipConfig;
+    this.slipQueue = this.slipQueue.catch(() => undefined).then(async () => {
+      for (const [index, candidate] of decision.approved.entries()) {
+        // Ticket PDA = [market, buyer, nonce] — offset by index so two approved candidates
+        // from the same decision can never collide even when they target the same market.
+        const nonce = BigInt(record.seq) * 1000n + BigInt(index);
+        const evidence = await executeSlipBuy(candidate, fixtureId, record.seq, nonce, {
+          rpcUrl: slipConfig.rpcUrl,
+          keypairPath: this.config.keypairPath,
+          slipConfig,
+        });
+        const existing = this.slipExecutions.get(fixtureId) ?? [];
+        existing.push(evidence);
+        this.slipExecutions.set(fixtureId, existing);
+        this.persistSlipExecution(evidence);
+        if (evidence.status === "failed") {
+          console.error(JSON.stringify({ event: "tissue.slip_execution_failed", fixtureId, seq: record.seq, error: evidence.error }));
+        }
+      }
+      this.updatedAt = Date.now();
+      this.publish();
+    });
+  }
+
   private fixtureSnapshot(fixtureId: string, result: EngineResult): FixtureSnapshot {
     const records = result.ledger.all();
     return {
@@ -745,6 +846,7 @@ export class LiveDesk {
       finalScore: result.finalScore,
       preMatchCommitment: this.preMatchCommitments.get(fixtureId) ?? null,
       checkpoints: this.checkpoints.get(fixtureId) ?? [],
+      slipExecutions: (this.slipExecutions.get(fixtureId) ?? []).slice(-200),
     };
   }
 

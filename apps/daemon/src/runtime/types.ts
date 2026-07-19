@@ -2,6 +2,7 @@ import type { DecisionRecord, GradeSheet, Network, RadarEvent } from "@tissue/sh
 import type { AnchorEvidence } from "../exec/anchorLive.js";
 import type { PreMatchCommitmentEvidence } from "../exec/preMatchCommit.js";
 import type { CheckpointAnchorEvidence } from "../exec/periodicAnchor.js";
+import type { SlipExecutionEvidence } from "../exec/slipExec.js";
 import type { QuoteRecord } from "../replay/engine.js";
 
 export type DeskStatus = "starting" | "verifying" | "quoting" | "watching" | "halted" | "error";
@@ -28,6 +29,11 @@ export interface FixtureSnapshot {
   /** Periodic on-chain checkpoints of the ledger head hash through the match
    *  (exec/periodicAnchor.ts, policy.exec.checkpoint_interval_decisions). */
   readonly checkpoints: readonly CheckpointAnchorEvidence[];
+  /** Real Slip execution evidence, one row per approved OR gate-rejected decision intent
+   *  (exec/slipExec.ts, risk/gates.ts::evaluateSlipExecution) — linked back to the decision
+   *  that produced it via decisionSeq. Empty unless policy.exec.slip.enabled and TISSUE_SLIP_*
+   *  are configured. */
+  readonly slipExecutions: readonly SlipExecutionEvidence[];
 }
 
 export interface DeskSnapshot {

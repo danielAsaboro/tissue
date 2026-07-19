@@ -137,7 +137,7 @@ describe.runIf(RUN_SURFPOOL_TESTS)("Tissue -> Slip real execution (Surfpool)", (
       reason: "surfpool end-to-end proof",
     };
 
-    const evidence = await executeSlipBuy(proposal, FIXTURE_ID, 1n, {
+    const evidence = await executeSlipBuy(proposal, FIXTURE_ID, 0, 1n, {
       rpcUrl: surfnet.rpcUrl,
       keypairPath,
       slipConfig,

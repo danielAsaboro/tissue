@@ -209,9 +209,11 @@ min_samples = 8                    # below this, fall back to the seed threshold
 seed_velocity_bps_per_sec = 40     # fallback threshold (bps/sec) before enough samples exist
 
 [exec]
-# EXECUTION MODEL (see GROUND-TRUTH.md, feedback.md): the sponsor devnet program has
-# NO intent-book. Live mode publishes risk-approved quotes through the daemon API and
-# never invents counterparties, fills, or PnL. Replay-only research may simulate fills.
+# EXECUTION MODEL (see GROUND-TRUTH.md, feedback.md): the sponsor devnet program (txoracle)
+# has NO intent-book — Live mode publishes risk-approved quotes through the daemon API and
+# never invents counterparties, fills, or PnL there. Replay-only research may simulate fills.
+# Real execution now exists on a SEPARATE venue: Slip (exec/slipExec.ts) — see [exec.slip]
+# below. TxLINE stays the trigger/event source; Slip is where a real signed transaction lands.
 book_mode = "quote_publication"
 anchor_mode = "validate_odds"  # proof endpoint + real on-chain view/optional transaction
 intent_ttl_ms = 30000            # posted intents expire (then Cancelled, residual refunded)
@@ -231,6 +233,21 @@ checkpoint_interval_decisions = 20
 # /metrics instead of discovered only when a real anchoring transaction fails.
 wallet_balance_check_interval_ms = 300_000   # 5 minutes
 wallet_low_balance_lamports = 5_000_000      # ~0.005 SOL — a handful of anchoring txs left
+
+[exec.slip]
+# Real-capital execution gate (risk/gates.ts::evaluateSlipExecution) — a SECOND, stricter
+# authorization layered on top of the existing quote-publication risk gate. Nothing here
+# lowers the bar the quote itself already had to clear; this only decides whether an
+# already-approved quote is ALSO allowed to risk real capital on Slip. Off by default: real
+# execution is an explicit opt-in, not an implicit consequence of quoting.
+enabled = false
+# Real capital only backs edges the desk is unusually confident in — deliberately higher
+# than strategy's ordinary quoting threshold, since publishing a recommendation and signing
+# a transaction that spends funds are not the same risk decision.
+min_edge_bps_to_execute = 250
+max_stake_units_per_market = 50_000_000    # per single Slip market/outcome stake ceiling
+max_concurrent_markets = 3                  # distinct open (unresolved) Slip positions at once
+max_total_exposure_units = 120_000_000      # aggregate stake across every open Slip position
 
 [grader]
 # CLV graded whether matched or not (fill-independence, PRD §1.4). Closing line = last

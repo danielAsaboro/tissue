@@ -158,6 +158,15 @@ export interface Policy {
     /** Below this lamport balance, /health and /metrics report a low-balance warning —
      *  anchoring and checkpoint transactions are at real risk of failing for lack of funds. */
     readonly wallet_low_balance_lamports: number;
+    /** Real-capital execution on Slip (exec/slipExec.ts) — a second, stricter authorization
+     *  on top of the existing quote-publication risk gate. See risk/gates.ts::evaluateSlipExecution. */
+    readonly slip: {
+      readonly enabled: boolean;
+      readonly min_edge_bps_to_execute: number;
+      readonly max_stake_units_per_market: number;
+      readonly max_concurrent_markets: number;
+      readonly max_total_exposure_units: number;
+    };
   };
   readonly grader: {
     readonly clv_reference: string;
@@ -294,6 +303,13 @@ const POLICY_SHAPE: Shape = {
     checkpoint_interval_decisions: "number",
     wallet_balance_check_interval_ms: "number",
     wallet_low_balance_lamports: "number",
+    slip: {
+      enabled: "boolean",
+      min_edge_bps_to_execute: "number",
+      max_stake_units_per_market: "number",
+      max_concurrent_markets: "number",
+      max_total_exposure_units: "number",
+    },
   },
   grader: { clv_reference: "string", brier_calibration_bins: "number" },
   replay: { speeds: "number[]" },
@@ -449,6 +465,14 @@ function validatePolicy(p: Policy): void {
     problems.push("exec.wallet_balance_check_interval_ms must be > 0");
   if (p.exec.wallet_low_balance_lamports < 0)
     problems.push("exec.wallet_low_balance_lamports must be >= 0");
+  if (p.exec.slip.min_edge_bps_to_execute < 0)
+    problems.push("exec.slip.min_edge_bps_to_execute must be >= 0");
+  if (p.exec.slip.max_stake_units_per_market <= 0)
+    problems.push("exec.slip.max_stake_units_per_market must be > 0");
+  if (p.exec.slip.max_concurrent_markets <= 0)
+    problems.push("exec.slip.max_concurrent_markets must be > 0");
+  if (p.exec.slip.max_total_exposure_units < p.exec.slip.max_stake_units_per_market)
+    problems.push("exec.slip.max_total_exposure_units must be >= exec.slip.max_stake_units_per_market");
   if (p.grader.brier_calibration_bins <= 0) problems.push("grader.brier_calibration_bins must be > 0");
   if (problems.length) throw new Error(`Invalid policy.toml: ${problems.join("; ")}`);
 }
