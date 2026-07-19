@@ -43,7 +43,7 @@ export function HaltBanner({ halt }: { halt: HaltState }) {
     <div className="halt-banner" role="alert">
       <div>
         <strong>{halt.kind === "error" ? "Unavailable" : "Halted"}</strong>
-        {reason ? ` — ${truncateReason(reason)}` : ""}
+        {reason ? ` — ${summarizeReason(reason)}` : ""}
         {halt.sinceMsgId ? (
           <span className="muted"> · since msg {halt.sinceMsgId}</span>
         ) : null}
@@ -56,12 +56,15 @@ export function HaltBanner({ halt }: { halt: HaltState }) {
 const REASON_MAX_CHARS = 240;
 
 /**
- * Defense in depth: the daemon's own error field is meant to stay short (RUNBOOK.md — public
- * state exposes only a generic proof failure, full diagnostics stay in operator logs), but this
- * is judge/operator-facing UI and should never render an unbounded string regardless of what
- * the backend sends.
+ * The daemon's error field is written for operators (RUNBOOK.md's own discipline: exact
+ * counts/message-ID pointers), not for a judge reading the dashboard. Known raw shapes get a
+ * short human headline here; haltEdgeCopy (below) carries the fuller explanation. Anything
+ * unrecognized still falls back to the raw text, truncated, rather than hiding information.
  */
-function truncateReason(reason: string): string {
+function summarizeReason(reason: string): string {
+  if (/proof-failure-rate|source proof\(s\) failed|source-proof queue exceeded/i.test(reason)) {
+    return "TxLINE source-proof verification is failing";
+  }
   if (reason.length <= REASON_MAX_CHARS) return reason;
   return `${reason.slice(0, REASON_MAX_CHARS)}… (truncated, see operator logs for full detail)`;
 }
@@ -73,6 +76,9 @@ function truncateReason(reason: string): string {
  * drawdown-kill, model-divergence, or the newer informed-flow signal.
  */
 function haltEdgeCopy(reason: string): string | null {
+  if (/proof-failure-rate|source proof\(s\) failed|source-proof queue exceeded/i.test(reason)) {
+    return "Safety: every odds/score message is verified against TxLINE's on-chain proof before Tissue prices from it. That proof service isn't confirming recent messages — an upstream data-availability issue, not a failure in Tissue's own pricing or risk logic. Operator-restart-only, same discipline as every other latch here — it will not silently resume once proofs start passing again.";
+  }
   if (/informed-flow/i.test(reason)) {
     return "Edge: this move's velocity is anomalous versus the market's own trailing distribution — a self-calibrating adverse-selection signal (Glosten-Milgrom), not a fixed magnitude threshold. The desk pulls quotes rather than trade against it.";
   }
