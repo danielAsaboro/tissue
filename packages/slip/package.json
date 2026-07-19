@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@slip/sdk": "file:../../vendor/slip-sdk-0.2.0-e125368.tgz",
+    "@slip/sdk": "npm:@mutinylabs/slip@0.2.0",
     "@solana/kit": "^6.10.0"
   },
   "devDependencies": {

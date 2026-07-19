@@ -11,7 +11,6 @@ COPY apps/analyst/package.json apps/analyst/package.json
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/slip/package.json packages/slip/package.json
-COPY vendor/slip-sdk-0.2.0-e125368.tgz vendor/slip-sdk-0.2.0-e125368.tgz
 COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 COPY policy.toml ./policy.toml

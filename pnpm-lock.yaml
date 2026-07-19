@@ -170,8 +170,8 @@ importers:
   packages/slip:
     dependencies:
       '@slip/sdk':
-        specifier: file:../../vendor/slip-sdk-0.2.0-e125368.tgz
-        version: file:vendor/slip-sdk-0.2.0-e125368.tgz(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)
+        specifier: npm:@mutinylabs/slip@0.2.0
+        version: '@mutinylabs/slip@0.2.0(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)'
       '@solana/kit':
         specifier: ^6.10.0
         version: 6.10.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -841,6 +841,33 @@ packages:
       '@cfworker/json-schema':
         optional: true
 
+  '@mutinylabs/slip@0.2.0':
+    resolution: {integrity: sha512-mXiddMb98toRH6d42D5wcQQDJHcrGFXC418hZrfKJtWohiwPeL2uSnSYg1DpzgGt1W1JkYQVjWo5BqpXzFVOqQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@ai-sdk/groq': 4.0.12
+      '@coral-xyz/anchor': 0.32.1
+      '@noble/hashes': ^1.6.1
+      '@solana/spl-token': ^0.4.9
+      '@solana/web3.js': ^1.98.0
+      ai: ^7.0.28
+      zod: ^4.4.3
+    peerDependenciesMeta:
+      '@ai-sdk/groq':
+        optional: true
+      '@coral-xyz/anchor':
+        optional: true
+      '@noble/hashes':
+        optional: true
+      '@solana/spl-token':
+        optional: true
+      '@solana/web3.js':
+        optional: true
+      ai:
+        optional: true
+      zod:
+        optional: true
+
   '@next/env@16.2.10':
     resolution: {integrity: sha512-zLPxg9M0MEHmygpj5OuxjQ+vHMiy/K7cSp74G8ecYolmgUWw0RwN02tF56npup/+qaI8JB97hQgS/r2Hb6QwVA==}
 
@@ -1069,34 +1096,6 @@ packages:
     resolution: {integrity: sha512-BfzEnDJOt9T8M989/lA37EcJgat01wLRnoi5dQf3QzOH7jzpqTAzdDbVfRljVr5r+jzKqpbHeyOfAaXxAd0PAA==}
     cpu: [x64]
     os: [win32]
-
-  '@slip/sdk@file:vendor/slip-sdk-0.2.0-e125368.tgz':
-    resolution: {integrity: sha512-srRYd5VMo0y2ZlQb+I75NSQKpvaHwmvQpVN/cwnGGaIJflumNgmnqu+aCiUUOIz5LUWtk3kEpYPV01EwYE/5Zw==, tarball: file:vendor/slip-sdk-0.2.0-e125368.tgz}
-    version: 0.2.0
-    engines: {node: '>=22'}
-    peerDependencies:
-      '@ai-sdk/groq': 4.0.12
-      '@coral-xyz/anchor': 0.32.1
-      '@noble/hashes': ^1.6.1
-      '@solana/spl-token': ^0.4.9
-      '@solana/web3.js': ^1.98.0
-      ai: ^7.0.28
-      zod: ^4.4.3
-    peerDependenciesMeta:
-      '@ai-sdk/groq':
-        optional: true
-      '@coral-xyz/anchor':
-        optional: true
-      '@noble/hashes':
-        optional: true
-      '@solana/spl-token':
-        optional: true
-      '@solana/web3.js':
-        optional: true
-      ai:
-        optional: true
-      zod:
-        optional: true
 
   '@solana/accounts@6.10.0':
     resolution: {integrity: sha512-+FxfDOrnifoPlBkF+fr8eeQdgM6xtIgAg9xKMu3WnIz60oZd4Xnry6+ff6t+ePPoZZp397FSg9ZJet68VCWm5Q==}
@@ -3487,6 +3486,22 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@mutinylabs/slip@0.2.0(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)':
+    dependencies:
+      '@solana/kit': 6.10.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+    optionalDependencies:
+      '@coral-xyz/anchor': 0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@noble/hashes': 1.8.0
+      '@solana/spl-token': 0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      ai: 7.0.28(zod@4.4.3)
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - bufferutil
+      - fastestsmallesttextencoderdecoder
+      - typescript
+      - utf-8-validate
+
   '@next/env@16.2.10': {}
 
   '@next/eslint-plugin-next@16.2.10':
@@ -3619,22 +3634,6 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.62.2':
     optional: true
-
-  '@slip/sdk@file:vendor/slip-sdk-0.2.0-e125368.tgz(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)':
-    dependencies:
-      '@solana/kit': 6.10.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
-    optionalDependencies:
-      '@coral-xyz/anchor': 0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
-      '@noble/hashes': 1.8.0
-      '@solana/spl-token': 0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
-      '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
-      ai: 7.0.28(zod@4.4.3)
-      zod: 4.4.3
-    transitivePeerDependencies:
-      - bufferutil
-      - fastestsmallesttextencoderdecoder
-      - typescript
-      - utf-8-validate
 
   '@solana/accounts@6.10.0(typescript@5.9.3)':
     dependencies:
