@@ -78,6 +78,28 @@ export interface AnchorEvidenceRow {
 }
 
 /**
+ * Real execution on Slip (exec/slipExec.ts, risk/gates.ts::evaluateSlipExecution) — TxLINE
+ * has no order/execution instructions of its own, so this is where a Tissue trading decision
+ * actually lands as a signed, confirmed transaction on a real settlement venue. One row per
+ * decision intent that was either approved and executed or rejected by the Slip-specific
+ * capital-risk gate, linked back to its decision via decisionSeq.
+ */
+export interface SlipExecutionRow {
+  readonly decisionSeq: number;
+  readonly marketKey: { readonly market: string; readonly lineTimes10?: number };
+  readonly selection: string;
+  readonly edgeBps: number;
+  readonly sizeUnits: number;
+  readonly status: "confirmed" | "failed" | "rejected-by-gate";
+  readonly market?: string;
+  readonly ticket?: string;
+  readonly marketCreateTxSig?: string;
+  readonly buyTxSig?: string;
+  readonly submittedAt: number;
+  readonly error?: string;
+}
+
+/**
  * On-chain commitment timeline: the pre-kickoff "Proof of Edge" snapshot plus every periodic
  * checkpoint of the ledger head hash anchored through the match (exec/preMatchCommit.ts,
  * exec/periodicAnchor.ts) — real SPL Memo transactions, not per-message validate_odds proof
@@ -161,6 +183,7 @@ export interface DashboardData {
   getAblationMatrix(): Promise<AblationMatrixSummary>;
   getCommitmentTimeline(): Promise<readonly CommitmentTimelineRow[]>;
   getEquityCurve(): Promise<readonly EquityCurvePoint[]>;
+  getSlipExecutions(): Promise<readonly SlipExecutionRow[]>;
   /** The fixture the dashboard's other data methods implicitly resolve to — needed by the
    *  in-browser verifier (VerifyPanel), which must know which fixture a decision seq
    *  belongs to before it can look it up in the public /record export. */

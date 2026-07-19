@@ -18,6 +18,7 @@ import type {
   HaltState,
   QuoteTapeRow,
   ReplayControl,
+  SlipExecutionRow,
   TissueVsMarketSeries,
 } from "../types";
 
@@ -50,6 +51,21 @@ interface ApiCheckpoint {
   readonly error?: string;
 }
 
+interface ApiSlipExecution {
+  readonly decisionSeq: number;
+  readonly marketKey: { readonly market: string; readonly lineTimes10?: number };
+  readonly selection: string;
+  readonly edgeBps: number;
+  readonly sizeUnits: number;
+  readonly status: "confirmed" | "failed" | "rejected-by-gate";
+  readonly market?: string;
+  readonly ticket?: string;
+  readonly marketCreateTxSig?: string;
+  readonly buyTxSig?: string;
+  readonly submittedAt: number;
+  readonly error?: string;
+}
+
 interface ApiFixture {
   readonly fixtureId: string;
   readonly decisions: readonly DecisionRecord[];
@@ -61,6 +77,7 @@ interface ApiFixture {
   readonly anchors: readonly AnchorEvidenceRow[];
   readonly preMatchCommitment: ApiPreMatchCommitment | null;
   readonly checkpoints: readonly ApiCheckpoint[];
+  readonly slipExecutions: readonly ApiSlipExecution[];
 }
 
 interface ApiState {
@@ -230,6 +247,11 @@ export class HttpDashboardData implements DashboardData {
   async getAnchorEvidence(): Promise<readonly AnchorEvidenceRow[]> {
     const state = await this.state();
     return this.active(state)?.anchors ?? [];
+  }
+
+  async getSlipExecutions(): Promise<readonly SlipExecutionRow[]> {
+    const state = await this.state();
+    return this.active(state)?.slipExecutions ?? [];
   }
 
   async getCommitmentTimeline(): Promise<readonly CommitmentTimelineRow[]> {

@@ -3,12 +3,14 @@ import { DecisionFeed } from "@/components/DecisionFeed";
 import { VerifyHashChainButton } from "./VerifyHashChainButton";
 import { AnchorEvidenceList } from "@/components/AnchorEvidenceList";
 import { CommitmentTimeline } from "@/components/CommitmentTimeline";
+import { SlipExecutionList } from "@/components/SlipExecutionList";
 
 export default async function DecisionsPage() {
-  const [records, anchors, commitments] = await Promise.all([
+  const [records, anchors, commitments, slipExecutions] = await Promise.all([
     dashboardData.getDecisionFeed(),
     dashboardData.getAnchorEvidence(),
     dashboardData.getCommitmentTimeline(),
+    dashboardData.getSlipExecutions(),
   ]);
   return (
     <div>
@@ -33,6 +35,14 @@ export default async function DecisionsPage() {
           of the head hash through the match (each folds in everything decided so far).
         </p>
         <CommitmentTimeline rows={commitments} network={dashboardData.network} />
+      </section>
+      <section className="panel">
+        <h2>Real execution on Slip</h2>
+        <p className="muted" style={{ marginBottom: 12 }}>
+          TxLINE has no order/execution instructions of its own — this is where a decision
+          actually lands as a signed, confirmed transaction on a real settlement venue.
+        </p>
+        <SlipExecutionList rows={slipExecutions} network={dashboardData.network} />
       </section>
     </div>
   );
