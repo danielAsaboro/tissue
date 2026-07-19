@@ -5,10 +5,17 @@ description: "Common questions, paper-trading disclaimers, and what depends on T
 
 ## Does Tissue execute real trades?
 
-No. TxLINE's current on-chain program has no intent-book or order-matching
-instruction, so live mode publishes risk-approved quotes and never invents a fill, a
-counterparty, or PnL. This is disclosed everywhere it's relevant — see
-[Limitations](#limitations).
+Within TxLINE's own on-chain program, no — `txoracle` has no intent-book or
+order-matching instruction, so live mode publishes risk-approved quotes there and never
+invents a fill, a counterparty, or PnL against it.
+
+On a separate venue, yes: Slip is a real settlement venue with its own order/execution
+instructions. A decision that clears a second, stricter, off-by-default capital-risk gate
+(deliberately higher edge threshold and its own exposure caps — publishing a
+recommendation and signing a transaction that spends funds are not the same risk
+decision) is turned into a real signed, confirmed transaction on Slip. See
+[Verifiability](/verifiability) for how to check a real execution's transaction signature
+yourself.
 
 ## Is the "learning" real, or marketing?
 
@@ -49,7 +56,9 @@ doesn't exist in this feed.
 
 ## Limitations
 
-- **No real order execution** — no sponsor on-chain intent-book exists yet
+- **No order execution against TxLINE's own on-chain program** — `txoracle` has no
+  intent-book. Real execution exists on Slip instead (off by default, its own stricter
+  risk gate) — see [Verifiability](/verifiability).
 - **Underpowered calibration** — only two real fixtures captured so far; more real
   match captures are needed before any tuning conclusion is trustworthy
 - **One-fixture-focus by default** — portfolio risk caps support concurrent fixtures,

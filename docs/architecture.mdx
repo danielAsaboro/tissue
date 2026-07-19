@@ -10,11 +10,11 @@ libraries:
 
 | Component | Role |
 |---|---|
-| `apps/daemon` | The decision engine, risk gates, ledger, on-chain anchoring, and HTTP/SSE API |
+| `apps/daemon` | The decision engine, risk gates, ledger, on-chain anchoring, real Slip execution, and HTTP/SSE API |
 | `apps/dashboard` | Next.js App Router UI — reads the daemon's evidence API, never the ledger directly |
 | `apps/analyst` | Read-only LLM forensics layer over the ledger, isolated from decisioning |
 | `packages/shared` | Shared types: markets, decisions, radar signal classes, units |
-| `packages/slip` | Client for the sponsor's Slip settlement SDK (used by the analyst layer only) |
+| `packages/slip` | Client for Slip's settlement SDK — real market/instruction builders used by the daemon for execution (signed, gated), and read-only market tools in the analyst layer |
 
 ## The decision pipeline
 
@@ -85,6 +85,20 @@ comparison is a real, computed head-to-head, not an assertion. A **regime ablati
 matrix** extends this further: each of the five regimes is isolated individually
 against the same neutralized baseline, so you can see which regime is actually earning
 its keep rather than only the bundled effect.
+
+## Real execution on Slip
+
+TxLINE's own on-chain program (`txoracle`) has no order or execution instruction of any
+kind — confirmed against the live IDL, not assumed. The risk-gated quote-publication API
+above was always the ceiling of what TxLINE itself makes possible. Real execution instead
+lands on Slip, a separate real settlement venue: a decision that already cleared the
+ordinary risk gate is evaluated against a second, stricter, off-by-default capital-risk
+gate (its own edge threshold and exposure caps), then turned into a real signed, confirmed
+transaction using the same keypair as on-chain anchoring. See [`architecture.md`
+§5](https://github.com/danielAsaboro/tissue/blob/main/architecture.md#5-real-execution-on-slip)
+in the repository for the full sequence diagram, and
+[Verifiability](/verifiability) for how to check a real execution's transaction
+independently.
 
 ## Network consistency
 

@@ -36,9 +36,18 @@ TISSUE_SLIP_WALLET=<optional public wallet address>
 ```
 
 Partial configuration fails startup. On public clusters, first call `list_slip_markets` only after
-the SDK capability check confirms the deployed unified binary. The four analyst market tools are
-read-only. `@tissue/slip` contains real instruction builders for a future risk-authorized signer,
-but the MCP and HTTP surfaces deliberately expose no transaction action.
+the SDK capability check confirms the deployed unified binary. The four analyst market tools stay
+read-only — the MCP and HTTP surfaces deliberately expose no transaction action there.
+
+The same `TISSUE_SLIP_*` variables above also enable the daemon's own real execution path
+(`exec/slipExec.ts`): a risk-approved decision that clears the second, stricter Slip capital-risk
+gate (`policy.exec.slip`, off by default) is turned into a real signed, confirmed `buyTicket`
+transaction, using the same keypair as on-chain anchoring (`TISSUE_KEYPAIR_PATH`) — never the
+analyst's boundary, which still never receives a signing key. Set `policy.exec.slip.enabled = true`
+and size `min_edge_bps_to_execute` / `max_stake_units_per_market` / `max_concurrent_markets` /
+`max_total_exposure_units` deliberately before enabling on a cluster carrying real value; the
+Surfpool test (`pnpm --filter @tissue/daemon test:slip:surfpool`) rehearses the full lifecycle
+— create market, buy, resolve from a real score proof, claim — against a local validator first.
 
 The real model-to-tool loop has its own explicit test gate:
 
@@ -82,8 +91,10 @@ curl http://127.0.0.1:8788/metrics
 - `/ready` is `503` until real feed data has arrived, at least one source proof has passed,
   and all hard gates are clear.
 - `/state` is the dashboard source of truth; it carries no credentials or private keys.
+  Includes `slipExecutions[]` — real Slip market/ticket addresses and transaction signatures
+  for decisions that risked real capital there, plus the reason for any gate-rejected intent.
 - `/record` is the public export judges or third parties can fetch directly, independent of
-  the dashboard, to reproduce every hash/signature/Merkle/anchoring check by hand.
+  the dashboard, to reproduce every hash/signature/Merkle/anchoring/Slip-execution check by hand.
 - `/verify` recomputes every persisted decision link. The dashboard's `/verify` page runs the
   equivalent chain client-side, ending in a fetch to a public Solana RPC from the browser.
 - `/arena` and `/arena/ablation` replay the fixture with regimes neutralized (in aggregate
@@ -168,7 +179,10 @@ pnpm --filter @tissue/daemon drill:streamdrop    # force-sever the SSE connectio
 
 `apps/dashboard` also has a real Playwright E2E suite against a fake-daemon fixture
 (`pnpm --filter @tissue/dashboard test:e2e`), and Surfpool-backed transaction-level anchoring
-tests are opt-in via `SURFPOOL_RPC_URL` (`pnpm --filter @tissue/daemon test:surfpool`).
+tests are opt-in via `SURFPOOL_RPC_URL` (`pnpm --filter @tissue/daemon test:surfpool`). The
+real Slip execution lifecycle (create market, buy, resolve, claim — real signed transactions,
+independently verified on-chain balances) has its own opt-in Surfpool test:
+`pnpm --filter @tissue/daemon test:slip:surfpool`.
 
 ## Teardown
 

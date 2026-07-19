@@ -60,12 +60,15 @@ enforce it mechanically, not just as a design intention.
 
 ## What Tissue does not claim
 
-To keep this documentation honest: Tissue does not execute real trades. TxLINE's
-current on-chain program has no intent-book or order-matching instruction, so live
-mode publishes risk-approved quotes and never invents a fill, a counterparty, or PnL.
-Simulated fills exist only in replay/research mode and are always labeled `simulated`.
-See [Limitations](/faq#limitations) for the full list of what depends on TxLINE
-capabilities that don't exist yet.
+To keep this documentation honest: Tissue never invents a fill, a counterparty, or PnL
+within TxLINE's own on-chain program — `txoracle` has no intent-book or order-matching
+instruction of its own, so live mode's quote-publication book only ever publishes
+risk-approved recommendations there. Simulated fills exist only in replay/research mode
+and are always labeled `simulated`. Real execution does exist, on a separate venue
+(Slip) — see [Verifiability](/verifiability) for how a decision turns into a real signed
+transaction, gated by its own stricter, off-by-default risk check. See
+[Limitations](/faq#limitations) for the full list of what depends on TxLINE capabilities
+that don't exist yet.
 
 ## Where to go next
 

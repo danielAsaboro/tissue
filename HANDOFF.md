@@ -193,6 +193,7 @@ Read `GROUND-TRUTH.md`, `REMAINING.md`, and `RUNBOOK.md`. Entry points are `pnpm
 | 9 Replay lab | ✅ done | replayCli (multi-speed); determinism confirmed; feed-gap chaos drill; simulation explicit and isolated |
 | + Analyst layer | ✅ done | `apps/analyst`: 3 constrained skills, 7 read-only MCP tools, Groq→DGrid LLM + agent; dashboard "Ask Tissue". **Additive, read-only, never near the decision path** |
 | + Slip consumer | ✅ local contract | Packed SDK readers/watchers/math/action builders plus analyst market tools. Public devnet use stays gated until the unified binary is detected. |
+| + Slip execution | ✅ done | `exec/slipExec.ts`: risk-approved decisions land as real signed transactions on Slip, gated by a second stricter capital-risk check (`risk/gates.ts::evaluateSlipExecution`, off by default). Full lifecycle (create/buy/resolve/claim) proven against a local Surfpool instance running the real compiled program — see D-010. |
 
 ---
 
@@ -307,11 +308,35 @@ The credential and captured corpus were intentionally not committed; a clean che
 receive a current credential file through `TXLINE_CREDENTIALS_PATH`. Findings are in
 feedback.md F-002. De-vig is validated against a protocol-valid captured StablePrice row.
 
+### D-010 — Real order execution lands on Slip, not TxLINE's own program
+The sponsor devnet program still has no order/execution instruction of any kind (D-001
+stands, unchanged) — that question was never TxLINE's to resolve. Real execution instead
+lands on Slip, a separate real settlement venue Tissue already vendors a consumer for
+(`packages/slip`, previously analyst-read-only-only). `exec/slipExec.ts` maps a
+risk-approved decision to a real Slip market/outcome band, checks it against a second,
+stricter, off-by-default capital-risk gate (`risk/gates.ts::evaluateSlipExecution` — its
+own edge threshold and exposure caps, layered on top of the existing quote-publication
+gate, not a replacement for it), then signs and submits a real `buyTicket` transaction
+with the same keypair used for on-chain anchoring. Found and fixed a real bug along the
+way: the vendored `@slip/sdk` tarball had been packed before Slip's `settlement_mode`
+field was added to `MarketExpression` on both the Rust program and the SDK's own
+committed codegen — the stale packed encoder silently omitted the field, corrupting
+every transaction built through it (Anchor error 102, `InstructionDidNotDeserialize`).
+No Slip source changes were needed; fixed by rebuilding and repacking from Slip's
+current, already-correct `main`. Rehearsed the full lifecycle — create market, buy,
+resolve from a real constructed score proof, claim, each step independently verified
+on-chain — against a local Surfpool instance running the real compiled Slip program
+(`apps/daemon/src/exec/slipExec.surfpool.test.ts`,
+`pnpm --filter @tissue/daemon test:slip:surfpool`). Evidence surfaces on `/state`,
+`/record`, and the dashboard's `/decisions` page. Not yet run against a public devnet
+deployment of Slip's program — see `REMAINING.md` item 7.
+
 ## Open questions
 - [x] **Free tier has no 1X2 market.** Totals-only bootstrap now prices and quotes the actual
       free-tier O/U bundle without synthesizing a 1X2 market.
-- [ ] Real orderbook IDL + `/api/trading/*` endpoints from sponsor (F-001) — swap into
-      `exec/` when published.
+- [x] **Real order execution.** Resolved via Slip, not the sponsor's own program — see D-010.
+- [ ] Real orderbook IDL + `/api/trading/*` endpoints from sponsor (F-001) — TxLINE's own
+      program still has none; would swap into `exec/` alongside Slip if ever published.
 - [ ] Record current `validate_odds` view/transaction evidence and CU cost with renewed
       credentials; the clean checkout contains no publisher token or signing key.
 

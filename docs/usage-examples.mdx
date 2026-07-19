@@ -91,18 +91,21 @@ match-minute proximity, and edge-magnitude proximity, not embeddings.
 | Page | Shows |
 |---|---|
 | `/overview` | Desk status, live streams, portfolio risk |
-| `/decisions` | Decision feed with regime badges, hash-chain verify button, on-chain commitment timeline, TxLINE input verification list |
+| `/decisions` | Decision feed with regime badges, hash-chain verify button, on-chain commitment timeline, TxLINE input verification list, real Slip execution evidence |
 | `/radar` | Signal-class legend and live latency-radar events |
 | `/quotes` | Quote tape with receipt links (decision hash, proof messageId, explorer URL) |
 | `/grade` | Grade sheet, shareable grade card, equity curve |
 | `/arena` | Strategy Arena head-to-head, regime ablation matrix |
+| `/verify` | In-browser third-party verifier — recomputes a decision's hash chain and fetches the anchoring transaction directly from a public Solana RPC |
 | `/analyst` | Read-only LLM forensics chat over the ledger |
 
-## Simulated execution disclaimer
+## Execution disclaimer
 
 <Warning>
-Live mode publishes risk-approved quotes only. It never invents a fill, a counterparty,
-or PnL — there is no sponsor on-chain intent-book to fill against. Simulated fills
-exist only in replay/research mode and are always marked `simulated: true`, end to end,
-in the ledger, the API, and the dashboard.
+Within TxLINE's own on-chain program, live mode publishes risk-approved quotes only —
+`txoracle` has no intent-book to fill against, so it never invents a fill, a
+counterparty, or PnL there. Simulated fills exist only in replay/research mode and are
+always marked `simulated: true`, end to end, in the ledger, the API, and the dashboard.
+Real execution does exist on a separate venue (Slip), off by default and gated by its
+own stricter risk check — see [Verifiability](/verifiability).
 </Warning>

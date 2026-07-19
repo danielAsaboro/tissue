@@ -227,3 +227,14 @@ limiting.
 - Extra-time/penalties pricing no longer zeroes remaining goal-scoring lambda at minute 90;
   an integer total-line push now refunds the stake instead of settling as a loss for both
   sides.
+- **Real order execution, on Slip.** The sponsor's own devnet program has no order or
+  execution instruction of any kind (`GROUND-TRUTH.md` T1), so real execution was never
+  going to happen against TxLINE itself. `exec/slipExec.ts` turns a risk-approved decision
+  into a real signed, confirmed transaction on Slip, a separate real settlement venue,
+  gated by a second, stricter, off-by-default capital-risk check
+  (`risk/gates.ts::evaluateSlipExecution`) layered on top of the existing quote-publication
+  gate. Rehearsed end to end — create market, buy, resolve from a real score proof, claim,
+  each step independently verified on-chain — against a local Surfpool instance running the
+  real compiled Slip program (`pnpm --filter @tissue/daemon test:slip:surfpool`). Evidence
+  (real market/ticket addresses and transaction signatures) is exposed on `/state`,
+  `/record`, and the dashboard's `/decisions` page.

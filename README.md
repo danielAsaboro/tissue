@@ -17,8 +17,13 @@ hash chain. Live mode never invents counterparties, fills, or PnL.
   free tier's totals-only bundle; 1X2 improves team-strength separation when available.
 - Automated edge, inventory, exposure, drawdown, model-divergence, feed-gap, and
   unexplained-movement policy gates.
-- A live quote-publication API. It publishes recommendations; it does not claim a fill
-  because TxLINE currently exposes no orderbook venue.
+- A live quote-publication API. TxLINE's own on-chain program (`txoracle`) has no order or
+  execution instructions — a data-oracle/validation program, not an orderbook (see
+  `GROUND-TRUTH.md` T1). Real execution instead lands on Slip, a separate real settlement
+  venue: `exec/slipExec.ts` turns a risk-approved decision into a real signed, confirmed
+  `buyTicket` transaction, gated by its own stricter capital-risk policy
+  (`risk/gates.ts::evaluateSlipExecution`, off by default). TxLINE stays the trigger/event
+  source; Slip is where a decision actually risks capital.
 - TxLINE odds-proof retrieval plus real Solana `validate_odds` verification. `view` mode
   checks program state; `transaction` mode additionally submits and confirms a transaction.
 - TxLINE score-stat proofs plus real Solana `validate_stat` verification for goals and red
@@ -47,7 +52,9 @@ hash chain. Live mode never invents counterparties, fills, or PnL.
 - A connected Next.js dashboard. No mock adapter or hard-coded success path exists.
 - A provenance-pinned `@slip/sdk@0.2.0` consumer with canonical market readers, WebSocket
   watchers, bigint pool/payout math, reference verification, wallet-ticket reads, and real
-  transaction builders. The analyst exposes only the read side; it never receives a signing key.
+  transaction builders. The daemon uses this for real execution (above), signed with the
+  same keypair used for on-chain anchoring; the analyst's own use of it stays read-only and
+  never receives a signing key.
 - Three explicit analyst skills and seven MCP tools spanning ledger forensics, Slip pool
   intelligence, and settlement-reference auditing. Slip pool weights remain evidence, not a
   substitute for Tissue fair value or TxLINE settlement truth.
@@ -103,8 +110,9 @@ Daemon evidence endpoints:
 
 - `GET /health` — process liveness, current feed state, and anchoring wallet balance
 - `GET /ready` — readiness requires real feed activity and no active halt
-- `GET /state` — fixtures, decisions, quotes, radar, grades, and proof evidence
-- `GET /record` — public machine-readable export for independent third-party verification
+- `GET /state` — fixtures, decisions, quotes, radar, grades, proof, and real Slip execution evidence
+- `GET /record` — public machine-readable export for independent third-party verification,
+  including real Slip market/ticket addresses and transaction signatures
 - `GET /verify` — recomputed decision hash-chain status
 - `GET /arena` — Tissue vs. neutralized-baseline head-to-head over the same fixture
 - `GET /arena/ablation` — each pricing regime isolated against the same baseline
@@ -125,8 +133,10 @@ apps/daemon/src/runtime      explicit live service and durable state publication
 apps/daemon/src/tissue       deterministic goals model and in-play repricing regimes
 apps/daemon/src/radar        event-to-market reaction classification
 apps/daemon/src/strategy     edge, inventory skew, sizing, quote proposals
-apps/daemon/src/risk         sole quote-publication authorization boundary
-apps/daemon/src/exec         replay book + live Solana score/odds verification + anchoring
+apps/daemon/src/risk         sole authorization boundary — quote-publication, plus a second
+                              stricter gate for real capital risked on Slip
+apps/daemon/src/exec         replay book, live Solana score/odds verification, anchoring, and
+                              real execution on Slip (exec/slipExec.ts)
 apps/daemon/src/ledger       hash-chained, Ed25519-signed, Merkle-provable decisions
 apps/daemon/src/arena        Strategy Arena and regime ablation matrix
 apps/daemon/src/grader       CLV, Brier, latency, class performance

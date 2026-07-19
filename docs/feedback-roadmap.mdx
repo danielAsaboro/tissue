@@ -31,8 +31,6 @@ Friction encountered (see the project's `feedback.md` for full detail):
   "underpowered" territory
 - Extend on-chain anchoring evidence once TxLINE exposes any additional oracle
   primitives beyond `validate_odds`/`validate_stat`
-- Revisit real order execution if/when a sponsor-side intent-book or settlement program
-  becomes available
 - Confirm with the TxLINE team whether `/api/odds/validation` and
   `/api/scores/stat-validation` are meant to serve proofs for historical/replayed
   messages, or are intentionally scoped to recent/live data only — the one remaining
@@ -60,6 +58,19 @@ Friction encountered (see the project's `feedback.md` for full detail):
 - Dashboard end-to-end suite (Playwright) covering every page under every desk status
 - A second real process-level chaos drill (`drill:streamdrop`) exercising SSE
   disconnect/reconnect resilience independent of TxLINE proof-verification success
+- Real order execution on Slip (`exec/slipExec.ts`): a risk-approved decision that
+  clears a second, stricter, off-by-default capital-risk gate
+  (`risk/gates.ts::evaluateSlipExecution`) is turned into a real signed, confirmed
+  transaction on a real settlement venue — TxLINE's own `txoracle` has no order/execution
+  instructions at all, so this closes what was previously the honest limitation above.
+  Found and fixed a real bug along the way: the vendored `@slip/sdk` tarball had been
+  packed before a required field (`settlement_mode`) was added to the on-chain program's
+  instruction shape, so every transaction it built was silently corrupted — diagnosed by
+  isolating the failure to a byte-identical call that passed in Slip's own repo but
+  failed in Tissue's, then diffing the committed source against the stale packed build.
+  Rehearsed end to end (create market, buy, resolve from a real score proof, claim, with
+  independent on-chain balance checks) against a local Surfpool instance
+  (`test:slip:surfpool`)
 </Accordion>
 
 ## Contributing

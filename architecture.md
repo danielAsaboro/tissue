@@ -25,12 +25,14 @@ flowchart LR
     CORPUS[("shared corpus dir\ncaptured feed · ledger JSONL · anchor evidence · policy snapshots")]
 
     SOL["Solana\nSPL Memo commits/checkpoints\ntxoracle validate_odds / validate_stat"]
+    SLIP["Slip\nreal settlement venue\ncreateMarket / buyTicket / resolve / claim"]
 
     TX -->|SSE + REST| D
     D -->|writes| CORPUS
     D -->|serves /state /record /ledger/proof ...| DASH
     D -->|analyst export JSON| A
     D -->|anchor tx| SOL
+    D -->|real signed buyTicket, gated| SLIP
     DASH -->|browser fetches tx directly, bypassing daemon| SOL
 ```
 
@@ -103,8 +105,9 @@ Arena's baseline agent and can be isolated one at a time via the regime ablation
 ## 4. On-chain anchoring
 
 Two independent, real SPL Memo mechanisms, both from the daemon's own operator keypair —
-Solana is the trust layer, never a counterparty (there is no real order execution; see
-§7).
+Solana is the trust and timestamping layer here, not a counterparty. Real order execution
+does exist, on a separate venue (Slip, §5), because TxLINE's own `txoracle` program has no
+order or execution instructions at all (§8).
 
 ```mermaid
 sequenceDiagram
@@ -134,7 +137,52 @@ endpoints and validated on-chain (`validate_odds` / `validate_stat`) **before** 
 enter the pipeline at all (§2) — this is *input* verification, distinct from the
 *commitment* anchoring above.
 
-## 5. Verification — how a third party checks any of this
+## 5. Real execution on Slip
+
+TxLINE's own on-chain program (`txoracle`) is a data-oracle/subscription/validation
+program — `subscribe`, `validate_odds`, `validate_stat`, `insert_*_root`, pricing-matrix
+admin — with no order-book or execution instruction anywhere in it (confirmed against the
+live IDL, not assumed). The risk-gated quote-publication API (§2) was always the ceiling of
+what TxLINE itself makes possible. Real execution instead lands on Slip, a separate,
+real pari-mutuel settlement venue: a decision that already cleared the ordinary risk gate
+(§2) is evaluated against a second, stricter, off-by-default capital-risk gate
+(`policy.exec.slip`, `risk/gates.ts::evaluateSlipExecution` — its own edge threshold and
+exposure caps, because publishing a recommendation and signing a transaction that spends
+funds are not the same risk decision), then turned into a real signed, confirmed
+transaction with the same keypair used for on-chain anchoring above.
+
+```mermaid
+sequenceDiagram
+    participant Engine as Decision engine
+    participant RiskGate as Risk gate (quote-publication)
+    participant SlipGate as Slip gate (real capital)
+    participant Daemon
+    participant Slip
+
+    Engine->>RiskGate: proposed quote (edge, size, market)
+    RiskGate-->>Engine: approved intent
+    Engine->>SlipGate: candidate (edge, size, market)
+    alt below edge threshold or over exposure caps
+        SlipGate-->>Daemon: rejected — evidence recorded, no transaction
+    else cleared
+        SlipGate-->>Daemon: approved
+        Daemon->>Slip: find-or-create market for this fixture/MarketKey
+        Slip-->>Daemon: confirmed createMarket tx (or existing market)
+        Daemon->>Slip: buyTicket(outcomeIndex, stakeAmount)
+        Slip-->>Daemon: confirmed buyTicket tx, real ticket address
+    end
+```
+
+Slip's market model is pool-based (stake into an outcome band before `entryDeadline`,
+resolve from a real TxLINE score proof, claim) — structurally different from the
+intent-book shape the replay `ExecPort` uses (`postIntent`/`replaceIntent`/`cancelIntent`),
+so this is a parallel execution path alongside quote-publication, not a replacement for it.
+Rehearsed end-to-end (create → buy → resolve from a real score proof → claim, with
+independent on-chain balance checks) against a local Surfpool instance running the real
+compiled Slip program (`vendor/slip-program-8VNZ5.so`) —
+`apps/daemon/src/exec/slipExec.surfpool.test.ts`.
+
+## 6. Verification — how a third party checks any of this
 
 The daemon exposes a real Merkle-proof primitive (`/ledger/proof`); the dashboard wraps
 it in a client-side verifier that never trusts Tissue's own server for the decisive step.
@@ -175,18 +223,24 @@ and `/policy/snapshots` (signed policy change log) are the full read-only eviden
 surface. See [`docs/verifiability.mdx`](docs/verifiability.mdx) for the complete
 specification.
 
-## 6. Testing strategy
+## 7. Testing strategy
 
 Every layer above has a corresponding real test — not a mock of the unit under test.
 
-- **Default suite** (322 tests, runs in every `pnpm run ci`): includes adversarial suites
-  that feed the ingest pipeline and the analyst's LLM+MCP loop deliberately malformed or
-  hostile input, asserting the system fails closed. This is how two real bugs were found
-  and fixed during hardening (NaN-poisoned odds consensus; a blank fallback answer in the
-  analyst's tool-loop limit) — see the [changelog](docs/feedback-roadmap.mdx#changelog).
+- **Default suite** (daemon: 291 tests, runs in every `pnpm run ci`): includes adversarial
+  suites that feed the ingest pipeline and the analyst's LLM+MCP loop deliberately
+  malformed or hostile input, asserting the system fails closed. This is how real bugs were
+  found and fixed during hardening — NaN-poisoned odds consensus; a blank fallback answer
+  in the analyst's tool-loop limit; and a stale-codegen bug in a vendored SDK that silently
+  corrupted every Slip transaction it built (§5) — see the
+  [changelog](docs/feedback-roadmap.mdx#changelog).
 - **Local Solana anchoring tests** (opt-in, `test:surfpool`): real transaction-level
   scenarios against a local Surfpool validator — confirmation, insufficient balance,
   unreachable RPC, concurrent submissions — without racing public devnet's rate limits.
+- **Local Slip execution test** (opt-in, `test:slip:surfpool`): the full real lifecycle —
+  create market, buy, resolve from a real score proof, claim — against a local Surfpool
+  instance running the actual compiled Slip program, with independent on-chain balance
+  checks at each step.
 - **Dashboard E2E** (opt-in, `test:e2e`): real Chromium against a real Next.js server,
   every page under every desk status, via a fake daemon HTTP process.
 - **Process-level chaos drills** (opt-in, real credentials required): `drill:restart`
@@ -194,12 +248,14 @@ Every layer above has a corresponding real test — not a mock of the unit under
   hard crash; `drill:streamdrop` severs the SSE connections without killing the process
   and asserts real reconnect.
 
-## 7. What Tissue never does
+## 8. What Tissue never does
 
-- **Never invents a fill, a counterparty, or PnL.** TxLINE's current on-chain program has
-  no intent-book or order-matching instruction. Live mode publishes risk-approved quotes
-  only; simulated fills exist solely in replay/research mode and are labeled `simulated`
-  everywhere they surface.
+- **Never invents a fill, a counterparty, or PnL within the TxLINE/quote-publication book.**
+  `txoracle` has no intent-book or order-matching instruction of its own; simulated fills
+  there exist solely in replay/research mode and are labeled `simulated` everywhere they
+  surface. Real execution on Slip (§5) is a separate, explicit, off-by-default path — real
+  capital, gated by its own stricter risk check, never a substitute counterparty invented
+  inside the quote-publication book itself.
 - **Never falls back to synthetic data in live mode.** A missing credential or feed
   outage is a loud failure, not a silent substitution.
 - **Never lets an LLM influence a decision.** The analyst is read-only by construction

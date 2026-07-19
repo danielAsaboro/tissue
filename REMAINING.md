@@ -34,11 +34,13 @@ current match activity, or deployment authority and must be completed with obser
 6. Keep `danielAsaboro/tissue` private during the competition as directed. After the competition
    has ended, an owner/admin can make it public when publication is authorized; do not change
    visibility now.
-7. The July 14 packed-SDK devnet capability check returned `unifiedMarkets: false`. After Slip's
-   unified binary is upgraded, run the packed Tissue consumer against that public
-   deployment: capability detection, list/read/watch, real multi-wallet stake, ticket read,
-   permissionless proof resolution, claim/refund, and teardown. Until then the checked evidence is
-   the protocol-valid local RPC contract plus Slip's real Surfpool lifecycle, not a Tissue devnet run.
+7. Item 7 (packed-SDK devnet capability check) is resolved differently than originally
+   scoped — see "Resolved" below. What remains open: whether Slip's unified program is
+   deployed and reachable on a *public* devnet (as opposed to a locally-deployed Surfpool
+   instance, which is what's actually been proven). Run the packed Tissue consumer's
+   `supportsUnifiedMarkets()` against a real public devnet RPC once Slip's program is
+   deployed there, and repeat the full lifecycle test against that public deployment
+   instead of local Surfpool.
 
 Video recording is explicitly outside the current implementation objective.
 
@@ -53,3 +55,22 @@ Video recording is explicitly outside the current implementation objective.
   at slot `477055999` on devnet. Live wiring (`runtime/liveDesk.ts::maybeSubmitPreMatchCommitment`)
   submits automatically once per fixture, persisted to `corpus/pre-match-commitments.jsonl`
   (gitignored) and surfaced on `FixtureSnapshot.preMatchCommitment`.
+
+## Resolved with real evidence (2026-07-19)
+
+- **Real order execution (formerly item 7, "Revisit real order execution... " in
+  feedback-roadmap.mdx).** TxLINE's own on-chain program has no order/execution
+  instructions at all (confirmed against the live IDL — `GROUND-TRUTH.md` T1), so this was
+  never going to resolve on TxLINE's side. `exec/slipExec.ts` now turns a risk-approved
+  decision into a real signed, confirmed transaction on Slip, a separate real settlement
+  venue, gated by a second stricter capital-risk check
+  (`risk/gates.ts::evaluateSlipExecution`, off by default —
+  `policy.exec.slip.enabled`). Along the way, found and fixed a real bug: the vendored
+  `@slip/sdk` tarball had been packed before a required field (`settlement_mode`) was
+  added to the on-chain program's instruction shape, silently corrupting every
+  transaction built through it. Rehearsed end to end — create market, buy, resolve from a
+  real score proof, claim, each step independently verified on-chain — against a local
+  Surfpool instance running the real compiled Slip program
+  (`apps/daemon/src/exec/slipExec.surfpool.test.ts`, `pnpm --filter @tissue/daemon
+  test:slip:surfpool`). Not yet run against a public devnet deployment of Slip's program —
+  see the remaining item 7 above for exactly what that would still require.
