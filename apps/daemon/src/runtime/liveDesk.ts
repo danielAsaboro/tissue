@@ -532,10 +532,19 @@ export class LiveDesk {
     this.publish();
   }
 
+  /**
+   * Public error summary (RUNBOOK.md: "Public state exposes only a generic proof failure;
+   * exact endpoint/RPC/account diagnostics stay in operator logs"). proofErrors accumulates one
+   * entry per currently-failing message, which is unbounded under sustained failure — collapsed
+   * to a count here rather than spread verbatim; the per-message detail already went to
+   * console.error (tissue.source_proof_failed) for operators.
+   */
   private refreshError(): void {
     const errors = [
       ...Object.values(this.streamErrors),
-      ...this.proofErrors.values(),
+      ...(this.proofErrors.size > 0
+        ? [`${this.proofErrors.size} source proof(s) failed — see operator logs for message IDs`]
+        : []),
       ...(this.proofCircuitReason ? [this.proofCircuitReason] : []),
     ];
     this.error = errors.length > 0 ? errors.join("; ") : undefined;

@@ -43,7 +43,7 @@ export function HaltBanner({ halt }: { halt: HaltState }) {
     <div className="halt-banner" role="alert">
       <div>
         <strong>{halt.kind === "error" ? "Unavailable" : "Halted"}</strong>
-        {reason ? ` — ${reason}` : ""}
+        {reason ? ` — ${truncateReason(reason)}` : ""}
         {halt.sinceMsgId ? (
           <span className="muted"> · since msg {halt.sinceMsgId}</span>
         ) : null}
@@ -51,6 +51,19 @@ export function HaltBanner({ halt }: { halt: HaltState }) {
       {edgeCopy ? <p className="halt-edge">{edgeCopy}</p> : null}
     </div>
   );
+}
+
+const REASON_MAX_CHARS = 240;
+
+/**
+ * Defense in depth: the daemon's own error field is meant to stay short (RUNBOOK.md — public
+ * state exposes only a generic proof failure, full diagnostics stay in operator logs), but this
+ * is judge/operator-facing UI and should never render an unbounded string regardless of what
+ * the backend sends.
+ */
+function truncateReason(reason: string): string {
+  if (reason.length <= REASON_MAX_CHARS) return reason;
+  return `${reason.slice(0, REASON_MAX_CHARS)}… (truncated, see operator logs for full detail)`;
 }
 
 /**
