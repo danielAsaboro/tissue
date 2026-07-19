@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile.daemon"
+  },
+  "deploy": {
+    "startCommand": "node -e \"require('fs').writeFileSync('/app/corpus/keypair.json', process.env.TISSUE_KEYPAIR_JSON); require('child_process').execFileSync(process.execPath, ['apps/daemon/main.mjs'], {stdio: 'inherit'})\"",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5
+  }
+}
