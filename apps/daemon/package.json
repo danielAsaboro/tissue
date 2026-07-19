@@ -15,6 +15,7 @@
     "seed-replay-fixture": "tsx src/ingest/seedCorpus.ts",
     "replay": "tsx src/replay/replayCli.ts",
     "evaluate:real": "tsx src/evaluation/evaluateReal.ts",
+    "evaluate:winrate": "tsx src/evaluation/evaluateAllFixtures.ts",
     "evaluate:fixtures": "tsx src/evaluation/evaluateHistoricalFixtures.ts",
     "evaluate:fixtures:tune": "tsx src/evaluation/tuneHistoricalCalibration.ts",
     "evaluate:calibration": "tsx src/evaluation/calibrationSplit.ts",

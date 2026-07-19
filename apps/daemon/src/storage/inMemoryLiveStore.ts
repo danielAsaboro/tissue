@@ -28,6 +28,9 @@ export function createInMemoryLiveStore(): LiveStore {
     async liveTapeExists(fixtureId) {
       return tapes.has(fixtureId);
     },
+    async listFixtureIds() {
+      return [...tapes.keys()].sort();
+    },
 
     async appendDecision(fixtureId, record) {
       const list = decisions.get(fixtureId) ?? [];

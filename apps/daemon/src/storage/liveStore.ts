@@ -20,6 +20,7 @@ export interface LiveStore {
   appendLiveMessage(fixtureId: string, message: FeedMessage): Promise<void>;
   readLiveTape(fixtureId: string): Promise<FeedMessage[]>;
   liveTapeExists(fixtureId: string): Promise<boolean>;
+  listFixtureIds(): Promise<string[]>;
 
   appendDecision(fixtureId: string, record: DecisionRecord): Promise<void>;
   readDecisions(fixtureId: string): Promise<DecisionRecord[]>;
@@ -72,6 +73,11 @@ export function createPostgresLiveStore(databaseUrl: string): LiveStore {
       const rows = await sql`select 1 from tissue_events
         where kind = 'corpus_message' and fixture_id = ${fixtureId} limit 1`;
       return rows.length > 0;
+    },
+    async listFixtureIds() {
+      const rows = await sql`select distinct fixture_id from tissue_events
+        where kind = 'corpus_message' and fixture_id is not null order by fixture_id`;
+      return rows.map((row) => row.fixture_id as string);
     },
 
     async appendDecision(fixtureId, record) {
