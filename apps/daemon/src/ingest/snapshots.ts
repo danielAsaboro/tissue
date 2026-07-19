@@ -1,6 +1,7 @@
 import type { FeedMessage, Network, OddsMessage, ScoreMessage } from "@tissue/shared";
 import { type AuthCredentials, authHeaders } from "./txlineAuth.js";
 import { normalizeOdds, normalizeScores } from "./normalize.js";
+import { parseJsonSse } from "./sse.js";
 
 /**
  * Snapshot / historical fetchers for corpus seeding (Phase 1.3). Paths confirmed from
@@ -13,7 +14,10 @@ import { normalizeOdds, normalizeScores } from "./normalize.js";
 async function getJson(url: string, creds: AuthCredentials): Promise<unknown[]> {
   const res = await fetch(url, { headers: authHeaders(creds), signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`GET ${url} → ${res.status} ${res.statusText}`);
-  const body = await res.json();
+  const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+  const body = contentType.includes("text/event-stream")
+    ? parseJsonSse(await res.text())
+    : await res.json();
   return Array.isArray(body) ? body : [body];
 }
 

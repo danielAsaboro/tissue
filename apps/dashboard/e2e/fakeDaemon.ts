@@ -115,7 +115,7 @@ function buildState(cfg: FakeDeskState) {
     finalScore: { home: lastDecision?.state.homeScore ?? 0, away: lastDecision?.state.awayScore ?? 0 },
     preMatchCommitment: null,
     checkpoints: [],
-    slipExecutions: [],
+    venueExecutions: [],
   }];
 
   return {

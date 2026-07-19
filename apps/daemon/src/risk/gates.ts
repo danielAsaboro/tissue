@@ -8,6 +8,7 @@ import {
 } from "@tissue/shared";
 import type { Policy } from "../config/policy.js";
 import type { QuoteProposal } from "../strategy/strategy.js";
+import { quoteLiabilityUnits } from "./liability.js";
 
 /**
  * Risk gate (PRD §5). [LANE: Tim]. THE ONLY MODULE AUTHORIZED TO GREEN-LIGHT EXECUTION.
@@ -105,17 +106,18 @@ export function evaluateRisk(
       rejected.push({ proposal: p, reason: "max-open-intents" });
       continue;
     }
-    const nextMarket = (projMarket[key] ?? 0) + p.sizeUnits;
+    const proposalLiability = quoteLiabilityUnits(p.side, p.priceMilliOdds, p.sizeUnits);
+    const nextMarket = (projMarket[key] ?? 0) + proposalLiability;
     if (nextMarket > policy.risk.exposure_cap_per_market_units) {
       rejected.push({ proposal: p, reason: "market-exposure-cap" });
       continue;
     }
-    if (projFixture + p.sizeUnits > policy.risk.exposure_cap_per_fixture_units) {
+    if (projFixture + proposalLiability > policy.risk.exposure_cap_per_fixture_units) {
       rejected.push({ proposal: p, reason: "fixture-exposure-cap" });
       continue;
     }
     projMarket[key] = nextMarket;
-    projFixture += p.sizeUnits;
+    projFixture += proposalLiability;
     openCount += 1;
     approved.push(p);
   }
@@ -135,13 +137,15 @@ export function evaluateRisk(
 export interface SlipTradeCandidate {
   readonly marketKey: MarketKey;
   readonly selection: Selection;
+  readonly side: "BACK" | "LAY";
   readonly sizeUnits: number;
   readonly edgeBps: number;
+  readonly tissueProbBps: number;
 }
 
 export interface SlipExecutionContext {
-  /** Distinct Slip markets with an unresolved Tissue position right now. */
-  readonly openMarketCount: number;
+  /** Unresolved Tissue stake by canonical market key (`1X2` or `TOTALS@line`). */
+  readonly stakedByMarketUnits: Readonly<Record<string, number>>;
   /** Aggregate units already staked across every open Slip position. */
   readonly totalStakedUnits: number;
 }
@@ -162,19 +166,27 @@ export function evaluateSlipExecution(
   }
   const approved: SlipTradeCandidate[] = [];
   const rejected: { candidate: SlipTradeCandidate; reason: string }[] = [];
-  let openMarkets = ctx.openMarketCount;
+  const stakedByMarket: Record<string, number> = { ...ctx.stakedByMarketUnits };
+  let openMarkets = Object.values(stakedByMarket).filter((stake) => stake > 0).length;
   let totalStaked = ctx.totalStakedUnits;
 
   for (const candidate of candidates) {
-    if (Math.abs(candidate.edgeBps) < cfg.min_edge_bps_to_execute) {
+    if (candidate.side !== "BACK") {
+      rejected.push({ candidate, reason: "slip-does-not-support-lay" });
+      continue;
+    }
+    if (candidate.edgeBps < cfg.min_edge_bps_to_execute) {
       rejected.push({ candidate, reason: "edge-below-slip-threshold" });
       continue;
     }
-    if (candidate.sizeUnits > cfg.max_stake_units_per_market) {
+    const marketKey = marketKeyString(candidate.marketKey);
+    const existingMarketStake = stakedByMarket[marketKey] ?? 0;
+    if (existingMarketStake + candidate.sizeUnits > cfg.max_stake_units_per_market) {
       rejected.push({ candidate, reason: "stake-exceeds-per-market-cap" });
       continue;
     }
-    if (openMarkets + 1 > cfg.max_concurrent_markets) {
+    const opensNewMarket = existingMarketStake === 0;
+    if (opensNewMarket && openMarkets + 1 > cfg.max_concurrent_markets) {
       rejected.push({ candidate, reason: "max-concurrent-markets" });
       continue;
     }
@@ -182,7 +194,8 @@ export function evaluateSlipExecution(
       rejected.push({ candidate, reason: "total-exposure-cap" });
       continue;
     }
-    openMarkets += 1;
+    if (opensNewMarket) openMarkets += 1;
+    stakedByMarket[marketKey] = existingMarketStake + candidate.sizeUnits;
     totalStaked += candidate.sizeUnits;
     approved.push(candidate);
   }

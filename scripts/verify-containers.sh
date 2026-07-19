@@ -69,11 +69,7 @@ if grep -Fqi "x-powered-by:" <<<"$headers"; then
 fi
 
 body="$(curl -fsS "http://127.0.0.1:${dashboard_port}/")"
-grep -Fq "120</b> tests green" <<<"$body"
-grep -Fq "Graded from evidence" <<<"$body"
-if grep -Fq "118" <<<"$body"; then
-  echo "dashboard contains a stale test count" >&2
-  exit 1
-fi
+grep -Fq "replay(corpus) === ledger" <<<"$body"
+grep -Fq "Grade yourself from evidence" <<<"$body"
 
 echo "container verification passed"

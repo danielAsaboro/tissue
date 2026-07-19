@@ -2,6 +2,12 @@
 
 **Autonomous in-play fair-value and quote-policy service powered by live TxLINE data.**
 
+**FullTime creates the conversation. Slip turns it into an agreement. Tissue finds the fair price and trades it across supported markets.**
+
+Today, “supported markets” means Tissue's implemented 1X2 and totals pricing families. Slip
+is the only enabled execution adapter. Polymarket and other order books are future adapter
+targets, not connected integrations or product features.
+
 Tissue consumes TxLINE score and StablePrice streams, freezes an opening goals model,
 reprices from match state, publishes risk-approved two-sided quote recommendations, halts
 when the feed or market becomes unsafe, and records every decision in a deterministic
@@ -20,7 +26,7 @@ hash chain. Live mode never invents counterparties, fills, or PnL.
 - A live quote-publication API. TxLINE's own on-chain program (`txoracle`) has no order or
   execution instructions — a data-oracle/validation program, not an orderbook (see
   `GROUND-TRUTH.md` T1). Real execution instead lands on Slip, a separate real settlement
-  venue: `exec/slipExec.ts` turns a risk-approved decision into a real signed, confirmed
+  venue: the Slip adapter turns a risk-approved decision into a real signed, confirmed
   `buyTicket` transaction, gated by its own stricter capital-risk policy
   (`risk/gates.ts::evaluateSlipExecution`, off by default). TxLINE stays the trigger/event
   source; Slip is where a decision actually risks capital.
@@ -146,7 +152,8 @@ apps/dashboard               live HTTP-backed Next.js evidence console + in-brow
 apps/dashboard/e2e           Playwright E2E suite against a fake-daemon fixture
 apps/analyst                 isolated MCP analyst over real live exports and read-only tools
 packages/shared              domain contracts
-packages/slip                generic packed-SDK consumer, market views, watchers, action builders
+packages/slip                Slip packed-SDK consumer, market views, watchers, action builders
+apps/daemon/src/exec/venue.ts reusable discovery/risk/submission/reconciliation evidence boundary
 vendor                       packed SDK plus source-commit and integrity provenance
 docs                         Mintlify documentation site
 ```

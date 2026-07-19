@@ -168,15 +168,27 @@ describe("engine — the decision loop", () => {
     expect(result.anchors[0]!.programId).toBe("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
   });
 
-  it("captures the pre-match commitment from the first priced tick only, unaffected by later score updates", () => {
+  it("commits the complete observed pre-match opening, unaffected by later score updates", () => {
     const corpus = generateSyntheticCorpus();
     const result = runEngine(corpus, policy);
     expect(result.preMatchCommitment).not.toBeNull();
     expect(result.preMatchCommitment!.fixtureId).toBe(result.fixtureId);
-    // The corpus's first odds message is what builds the pricer; the commitment must be
-    // timestamped at that tick, not drift as later score messages arrive.
-    const firstOdds = corpus.find((m) => m.kind === "odds");
-    expect(result.preMatchCommitment!.ts).toBe(firstOdds!.ts);
+    const preMatchOdds = corpus.filter((message) => message.kind === "odds" && !message.inRunning);
+    expect(result.preMatchCommitment!.ts).toBe(Math.max(...preMatchOdds.map((message) => message.ts)));
+    expect(result.preMatchCommitment!.markets.map((market) => market.marketKey.market).sort()).toEqual(["1X2", "TOTALS"]);
+  });
+
+  it("produces the same opening commitment when complementary pre-match streams arrive in either order", () => {
+    const corpus = generateSyntheticCorpus();
+    const initialScore = corpus.find((message) => message.kind === "score")!;
+    const openings = corpus.filter((message) => message.kind === "odds" && !message.inRunning);
+    const firstInPlay = corpus.find((message) => message.kind === "score" && message.ts > initialScore.ts)!;
+    const forward = runEngine([initialScore, ...openings, firstInPlay], policy).preMatchCommitment;
+    const reverse = runEngine([initialScore, ...[...openings].reverse(), firstInPlay], policy).preMatchCommitment;
+    expect(forward).not.toBeNull();
+    expect(reverse).not.toBeNull();
+    expect(reverse!.hash).toBe(forward!.hash);
+    expect(reverse!.markets).toEqual(forward!.markets);
   });
 
   it("a session with no priced markets (odds never arrive) has no pre-match commitment", () => {
@@ -246,6 +258,7 @@ describe("EngineSession.kill() — external (portfolio-level) latch", () => {
     const midpoint = Math.floor(corpus.length / 2);
     for (const msg of corpus.slice(0, midpoint)) session.append(msg);
     session.kill();
+    expect(session.current().book.openIntents()).toHaveLength(0);
     for (const msg of corpus.slice(midpoint)) session.append(msg);
     const result = session.finish();
     const postAfterKill = result.ledger

@@ -68,8 +68,9 @@ Friction encountered (see the project's `feedback.md` for full detail):
   instruction shape, so every transaction it built was silently corrupted — diagnosed by
   isolating the failure to a byte-identical call that passed in Slip's own repo but
   failed in Tissue's, then diffing the committed source against the stale packed build.
-  Rehearsed end to end (create market, buy, resolve from a real score proof, claim, with
-  independent on-chain balance checks) against a local Surfpool instance
+  Rehearsed end to end (independently provision a two-sided market, buy, resolve from a
+  protocol-valid score proof, claim, and retry reconciliation, with independent on-chain
+  balance checks) against a local Surfpool instance
   (`test:slip:surfpool`)
 </Accordion>
 

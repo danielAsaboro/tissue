@@ -61,6 +61,10 @@ export const PHASE_START_MINUTE: Record<number, number> = {
   [STATUS.ET2]: 105,
   [STATUS.WPE]: 120,
   [STATUS.PE]: 120,
+  [STATUS.F]: 90,
+  [STATUS.FET]: 120,
+  [STATUS.FPE]: 120,
+  [STATUS.FINALISED]: 90,
 };
 
 /** free_kick.Data.FreeKickType danger levels (NOT possession — see HANDOFF D-004). */

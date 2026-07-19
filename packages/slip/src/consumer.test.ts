@@ -14,7 +14,7 @@ import { createSlipClient } from "@slip/sdk";
 import { loadTissueSlipConfig } from "./config.js";
 import { TissueSlipConsumer } from "./consumer.js";
 
-const PROGRAM = address("8VNZ5VseAcFaYhAZxetgE5N8eiD17ZZNchGhoatYUUXw");
+const PROGRAM = address("7gNEnFMDVhxFLSrtSctaPPCX7RcPbz1Lu5vtxvzobXFt");
 const MINT = address("ELWTKspHKCnCfCiCiqYw1EDH77k8VCP74dK9qytG2Ujh");
 const CREATOR = address("DZqzfMTmFyDvhLWamA4qjiEUUzS8LoTZ6d2KMkXwsiXh");
 const BUYER = address("DK2H6r7djsYd4KJQywCgnPjn94552QNJUVFmtJWyzLpJ");
@@ -95,11 +95,11 @@ beforeAll(async () => {
     tipBps: 20,
     state: MarketState.Open,
     winningOutcome: null,
-    resolutionCandidate: null,
+    resolutionEvidenceHash: null,
     createdAt: 1_999_000_000n,
     resolvedTs: 0n,
     ticketCount: 2,
-    claimedWinningStake: 0n,
+    claimedStake: 0n,
     bump: 255,
   })).toString("base64");
 
@@ -152,10 +152,12 @@ describe("Tissue packed Slip consumer", () => {
       commitment: "confirmed",
     });
     await expect(consumer.supportsUnifiedMarkets()).resolves.toBe(true);
+    await expect(consumer.deriveMarketAddress(CREATOR, 7n)).resolves.toBe(marketAddress);
     const markets = await consumer.listMarkets({ fixtureId: "18209181", stake: "2.5" });
     expect(markets).toHaveLength(1);
     expect(markets[0]).toMatchObject({
       address: marketAddress,
+      id: "7",
       totalPool: "10",
       protocolFee: "0.05",
       resolverTip: "0.02",
@@ -167,7 +169,7 @@ describe("Tissue packed Slip consumer", () => {
       market: marketAddress,
       buyer: BUYER,
       outcomeIndex: 2,
-      amount: "2.5",
+      amountAtomic: 2_500_000n,
       nonce: 9n,
     });
     expect(buy.kind).toBe("buy");

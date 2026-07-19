@@ -60,8 +60,8 @@ export interface EngineResult {
   readonly radarEvents: RadarEvent[];
   readonly halts: HaltSignal[];
   readonly anchors: PreparedAnchor[];
-  /** Deterministic "Proof of Edge" snapshot from the FIRST priced tick (pre-kickoff, before
-   *  any score message). Null until a pricer exists. Live on-chain submission is a separate
+  /** Deterministic "Proof of Edge" snapshot from the complete observed pre-match opening
+   *  (frozen on the first score/in-running tick). Null until the opening is frozen. Live submission is a separate
    *  async step (exec/preMatchCommit.ts::submitPreMatchCommitment). */
   readonly preMatchCommitment: PreMatchCommitment | null;
   readonly book: SimulatedBook;
@@ -178,12 +178,26 @@ export function createEngineSession(
   let voided = false;
   let openingHome: OddsMessage | null = null;
   let openingTotals: OddsMessage | null = null;
+  let openingFrozen = false;
   let fixtureId = "UNKNOWN";
   let finalScore = { home: 0, away: 0 };
   let finalized = false;
   let anchorTick = 0;
   const ladders = new Map<string, FeeLadder>();
   const txRetries = new Map<string, number>();
+
+  const freezeOpening = (): void => {
+    if (openingFrozen) return;
+    if (!openingHome && !openingTotals) return;
+    openingFrozen = true;
+    pricer = buildPricer(openingHome, openingTotals, policy);
+    const openingTs = Math.max(openingHome?.ts ?? 0, openingTotals?.ts ?? 0);
+    preMatchCommitment = preparePreMatchCommitment(
+      fixtureId,
+      openingTs,
+      pricer.price(state.tissueState(openingTs)).markets,
+    );
+  };
 
   const append = (msg: FeedMessage): EngineResult => {
     if (finalized) throw new Error("cannot append to a finalized engine session");
@@ -204,18 +218,25 @@ export function createEngineSession(
     radarEvents.push(...rout.events);
     halts.push(...rout.halts);
 
-    let justBuiltPricer = false;
     if (msg.kind === "score") {
+      freezeOpening();
       state.applyScore(msg);
       finalScore = { home: msg.homeScore, away: msg.awayScore };
       if (msg.isVoid) voided = true;
     } else if (!voided) {
       market.set(marketKeyString(msg.marketKey), msg);
-      if (msg.marketKey.market === "1X2" && !openingHome) openingHome = msg;
-      if (msg.marketKey.market === "TOTALS" && !openingTotals) openingTotals = msg;
+      if (!openingFrozen) {
+        if (msg.marketKey.market === "1X2" && (!msg.inRunning || !openingHome)) openingHome = msg;
+        if (msg.marketKey.market === "TOTALS" && (!msg.inRunning || !openingTotals)) openingTotals = msg;
+        if (msg.inRunning) freezeOpening();
+        else if (openingHome || openingTotals) {
+          // Rebuild from the latest pre-match observation for every available market. The final
+          // opening is therefore independent of whether 1X2 or totals arrived first.
+          pricer = buildPricer(openingHome, openingTotals, policy);
+        }
+      }
       if (!pricer && (openingHome || openingTotals)) {
         pricer = buildPricer(openingHome, openingTotals, policy);
-        justBuiltPricer = true;
       }
       if (simulateFills) simulateExternalFlow(book, msg, exposure);
       if (shouldAnchor(policy, anchorTick++)) anchors.push(prepareOddsAnchor(network, msg.ts));
@@ -247,11 +268,6 @@ export function createEngineSession(
     }
 
     const priced = pricer.price(tissueState);
-    if (justBuiltPricer) {
-      // "Proof of Edge": the very first priced tick, before this session has processed a
-      // single score message — the desk's committed pre-match fair value.
-      preMatchCommitment = preparePreMatchCommitment(fixtureId, msg.ts, priced.markets);
-    }
     const oneX2 = priced.markets.find((m) => m.marketKey.market === "1X2");
     if (oneX2) {
       forecasts.push({
@@ -393,6 +409,7 @@ export function createEngineSession(
 
   const finish = (): EngineResult => {
     if (!finalized) {
+      freezeOpening();
       // Flush any open Radar reaction so a trailing goal/correction reaction is retained.
       const flushOut = radar.flush((prevTs ?? 0) + policy.radar.unexplained_window_ms + 1);
       radarEvents.push(...flushOut.events);
@@ -409,6 +426,10 @@ export function createEngineSession(
 
   const kill = (): void => {
     killed = true;
+    for (const intent of book.openIntents()) {
+      const cancelled = book.cancelIntent(intent.id);
+      if (cancelled) exposure.upsertOpen(cancelled);
+    }
   };
 
   return { append, current, finish, kill };

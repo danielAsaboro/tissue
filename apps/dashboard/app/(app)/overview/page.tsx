@@ -24,7 +24,7 @@ export default async function OverviewPage() {
             a copy of the last odds tick.
           </li>
           <li>
-            <strong>Latency Radar</strong> — every market reaction classified against tissue fair
+            <strong>Latency Radar</strong> — each supported-market reaction classified against tissue fair
             value (late / fast / overreact / stale / unexplained).
           </li>
           <li>

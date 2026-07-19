@@ -5,6 +5,7 @@ import { normalizeOdds, normalizeScores } from "./normalize.js";
 import { generateSyntheticCorpus } from "./synthetic.js";
 import { PERIOD_PREFIX, STAT_KEY, STATUS } from "./soccerFeed.js";
 import { parseActivationToken } from "./txlineAuth.js";
+import { parseJsonSse } from "./sse.js";
 
 describe("TxLINE auth response compatibility", () => {
   it("accepts the live plain-text token and documented JSON shapes", () => {
@@ -45,6 +46,13 @@ describe("SseFrameParser", () => {
     expect(p.push("data: hel")).toHaveLength(0);
     const frames = p.push("lo\n\n");
     expect(frames[0]!.data).toBe("hello");
+  });
+});
+
+describe("captured SSE response parsing", () => {
+  it("parses JSON data records while ignoring ids and comments", () => {
+    expect(parseJsonSse(': heartbeat\nid: 1\ndata: {"FixtureId":7}\n\nid: 2\ndata: {"FixtureId":8,\ndata: "ok":true}\n\n'))
+      .toEqual([{ FixtureId: 7 }, { FixtureId: 8, ok: true }]);
   });
 });
 
@@ -114,6 +122,23 @@ describe("normalizeScores", () => {
     expect(fk!.possession.home).toBe("high_danger");
     expect(fk!.possession.away).toBe("none");
   });
+
+  it("uses the real feed clock, top-level participant, and delivery sequence identity", () => {
+    const first = normalizeScores({
+      FixtureId: 7, Id: 97, Seq: 96, Ts: 1_000, StatusId: STATUS.H1,
+      Action: "free_kick", Participant: 2, Clock: { Seconds: 406 },
+      Data: { FreeKickType: "HighDanger" }, Stats: {},
+    }, "mainnet");
+    const amended = normalizeScores({
+      FixtureId: 7, Id: 97, Seq: 99, Ts: 2_000, StatusId: STATUS.H1,
+      Action: "free_kick", Participant: 2, Clock: { Seconds: 410 },
+      Data: { FreeKickType: "Safe" }, Stats: {},
+    }, "mainnet");
+    expect(first!.minute).toBe(6);
+    expect(first!.possession.away).toBe("high_danger");
+    expect(first!.msgId).toBe("7:s:96");
+    expect(amended!.msgId).toBe("7:s:99");
+  });
 });
 
 describe("normalizeOdds", () => {
@@ -127,6 +152,15 @@ describe("normalizeOdds", () => {
     const sum = Object.values(m!.consensus).reduce((s, v) => s + v, 0);
     expect(Math.abs(sum - 10000)).toBeLessThanOrEqual(2);
     expect(m!.marketKey.market).toBe("1X2");
+  });
+
+  it("recognizes TxLINE's captured part1/draw/part2 selection names", () => {
+    const m = normalizeOdds(
+      { FixtureId: 18213979, SuperOddsType: "1X2_PARTICIPANT_RESULT", PriceNames: ["part1", "draw", "part2"], Prices: [4280, 4097, 1915] },
+      "mainnet",
+    );
+    expect(m).not.toBeNull();
+    expect(Object.keys(m!.consensus).sort()).toEqual(["AWAY", "DRAW", "HOME"]);
   });
 
   it("classifies totals with a line and canonicalizes Over/Under", () => {

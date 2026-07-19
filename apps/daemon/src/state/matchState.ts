@@ -58,12 +58,16 @@ export class MatchState {
 
   applyScore(msg: ScoreMessage): void {
     this.decayTo(msg.ts);
-    this.minute = msg.minute;
+    // `game_finalised` is commonly followed by a `disconnected` delivery with no status or
+    // clock. Terminal state is monotonic: transport teardown must not reopen a completed
+    // match or reset its model clock to zero.
+    if (this.isFinal && !msg.isFinal) return;
+    this.minute = msg.isFinal ? Math.max(this.minute, msg.minute) : msg.minute;
     this.homeScore = msg.homeScore;
     this.awayScore = msg.awayScore;
     this.homeReds = msg.homeReds;
     this.awayReds = msg.awayReds;
-    this.isFinal = msg.isFinal;
+    this.isFinal = this.isFinal || msg.isFinal;
     if (msg.phase !== undefined) {
       const parsed = Number(msg.phase);
       if (Number.isFinite(parsed)) this.statusId = parsed;

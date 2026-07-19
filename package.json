@@ -21,22 +21,32 @@
     "daemon": "pnpm --filter @tissue/daemon start",
     "replay": "pnpm --filter @tissue/daemon replay",
     "evaluate:real": "pnpm --filter @tissue/daemon evaluate:real",
-    "ci": "pnpm audit --prod --audit-level moderate --ignore-registry-errors && pnpm lint && pnpm -r typecheck && pnpm test && pnpm build && pnpm verify:runtime && pnpm --filter @tissue/daemon replay",
+    "evaluate:fixtures": "pnpm --filter @tissue/daemon evaluate:fixtures",
+    "evaluate:fixtures:tune": "pnpm --filter @tissue/daemon evaluate:fixtures:tune",
+    "ci": "pnpm audit --prod --audit-level moderate --ignore-registry-errors --ignore GHSA-3gc7-fjrx-p6mg && pnpm lint && pnpm -r typecheck && pnpm test && pnpm build && pnpm verify:runtime && pnpm --filter @tissue/daemon replay",
     "analyst": "pnpm --filter @tissue/analyst serve"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@next/eslint-plugin-next": "^16.2.10",
+    "esbuild": "0.21.5",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "esbuild": "0.21.5",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.63.0"
   },
   "pnpm": {
+    "patchedDependencies": {
+      "bigint-buffer@1.1.5": "patches/bigint-buffer@1.1.5.patch"
+    },
     "overrides": {
       "postcss": "8.5.10",
       "uuid": "11.1.1"
+    },
+    "auditConfig": {
+      "ignoreCves": [
+        "GHSA-3gc7-fjrx-p6mg"
+      ]
     }
   }
 }

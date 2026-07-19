@@ -1,6 +1,7 @@
 import { fetchScoresSnapshot } from "../src/ingest/snapshots.js";
 import { verifyScoreOnChain } from "../src/exec/scoreAnchorLive.js";
 import { loadCredentials, loadLiveConfig } from "../src/runtime/config.js";
+import type { ScoreMessage } from "@tissue/shared";
 
 async function main(): Promise<void> {
   const fixtureId = process.argv[2];
@@ -10,9 +11,10 @@ async function main(): Promise<void> {
   const config = loadLiveConfig();
   const credentials = loadCredentials(config);
   const messages = await fetchScoresSnapshot(config.origin, credentials, fixtureId);
-  const score = messages
-    .filter((message) => message.kind === "score" && message.sourceSeq !== undefined)
-    .sort((a, b) => b.ts - a.ts)[0];
+  const sequenced = messages
+    .filter((message): message is ScoreMessage => message.kind === "score" && message.sourceSeq !== undefined)
+    .sort((a, b) => (b.sourceSeq ?? 0) - (a.sourceSeq ?? 0));
+  const score = sequenced.find((message) => message.kind === "score" && message.isFinal) ?? sequenced[0];
   if (!score || score.kind !== "score") {
     throw new Error(`TxLINE returned no sequenced score snapshot for fixture ${fixtureId}`);
   }

@@ -8,6 +8,11 @@ overrides:
   postcss: 8.5.10
   uuid: 11.1.1
 
+patchedDependencies:
+  bigint-buffer@1.1.5:
+    hash: 4b3c529ecf14debeeb2a1591ccad84be802b5daad03e34bb2b614e2923d5678c
+    path: patches/bigint-buffer@1.1.5.patch
+
 importers:
 
   .:
@@ -162,8 +167,8 @@ importers:
   packages/slip:
     dependencies:
       '@slip/sdk':
-        specifier: file:../../vendor/slip-sdk-0.2.0.tgz
-        version: file:vendor/slip-sdk-0.2.0.tgz(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)
+        specifier: file:../../vendor/slip-sdk-0.2.0-e125368.tgz
+        version: file:vendor/slip-sdk-0.2.0-e125368.tgz(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)
       '@solana/kit':
         specifier: ^6.10.0
         version: 6.10.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -1062,19 +1067,21 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@slip/sdk@file:vendor/slip-sdk-0.2.0.tgz':
-    resolution: {integrity: sha512-ZDL+FENCIbUTp/aqFhmwElkRgco/cys4++JcFMSXZFDXox5zB2TDVqzMPJS1nTrZG4JZ7FIO3zqOfHJjau7ECQ==, tarball: file:vendor/slip-sdk-0.2.0.tgz}
+  '@slip/sdk@file:vendor/slip-sdk-0.2.0-e125368.tgz':
+    resolution: {integrity: sha512-srRYd5VMo0y2ZlQb+I75NSQKpvaHwmvQpVN/cwnGGaIJflumNgmnqu+aCiUUOIz5LUWtk3kEpYPV01EwYE/5Zw==, tarball: file:vendor/slip-sdk-0.2.0-e125368.tgz}
     version: 0.2.0
     engines: {node: '>=22'}
     peerDependencies:
+      '@ai-sdk/groq': 4.0.12
       '@coral-xyz/anchor': 0.32.1
       '@noble/hashes': ^1.6.1
       '@solana/spl-token': ^0.4.9
       '@solana/web3.js': ^1.98.0
       ai: ^7.0.28
-      ollama-ai-provider-v2: 4.0.1
       zod: ^4.4.3
     peerDependenciesMeta:
+      '@ai-sdk/groq':
+        optional: true
       '@coral-xyz/anchor':
         optional: true
       '@noble/hashes':
@@ -1084,8 +1091,6 @@ packages:
       '@solana/web3.js':
         optional: true
       ai:
-        optional: true
-      ollama-ai-provider-v2:
         optional: true
       zod:
         optional: true
@@ -3608,7 +3613,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.62.2':
     optional: true
 
-  '@slip/sdk@file:vendor/slip-sdk-0.2.0.tgz(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)':
+  '@slip/sdk@file:vendor/slip-sdk-0.2.0-e125368.tgz(@coral-xyz/anchor@0.32.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@noble/hashes@1.8.0)(@solana/spl-token@0.4.15(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(ai@7.0.28(zod@4.4.3))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)':
     dependencies:
       '@solana/kit': 6.10.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
     optionalDependencies:
@@ -3659,7 +3664,7 @@ snapshots:
     dependencies:
       '@solana/buffer-layout': 4.0.1
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
-      bigint-buffer: 1.1.5
+      bigint-buffer: 1.1.5(patch_hash=4b3c529ecf14debeeb2a1591ccad84be802b5daad03e34bb2b614e2923d5678c)
       bignumber.js: 9.3.1
     transitivePeerDependencies:
       - bufferutil
@@ -4487,7 +4492,7 @@ snapshots:
 
   baseline-browser-mapping@2.10.43: {}
 
-  bigint-buffer@1.1.5:
+  bigint-buffer@1.1.5(patch_hash=4b3c529ecf14debeeb2a1591ccad84be802b5daad03e34bb2b614e2923d5678c):
     dependencies:
       bindings: 1.5.0
 

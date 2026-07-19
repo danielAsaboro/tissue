@@ -30,6 +30,11 @@ export interface Intent {
   readonly priceMilliOdds: MilliOdds;
   readonly sizeUnits: Units;
   readonly filledUnits: Units;
+  /** Tissue's fair probability for this exact selection at creation. Required by any
+   * capital-spending venue gate; a record-level top edge may describe another selection. */
+  readonly tissueProbBps: Bps;
+  /** Tissue minus TxLINE consensus for this exact selection when the intent was created. */
+  readonly edgeBps: number;
   readonly status: IntentStatus;
   /** True while any part of this intent's matching is simulated (current book_mode). */
   readonly simulated: boolean;

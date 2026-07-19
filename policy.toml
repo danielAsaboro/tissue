@@ -119,8 +119,8 @@ min_spread_mult = 0.7     # floor multiplier — at most 30% tighter once fully 
 [sizing]
 # Capped fractional Kelly. size = kelly_fraction * full_kelly, clamped by caps below.
 kelly_fraction = 0.25
-min_stake_units = 1_000_000       # 0.001 SOL-equivalent lamports floor per intent
-max_stake_units = 500_000_000     # 0.5 SOL-equivalent lamports ceiling per intent
+min_stake_units = 1_000_000       # 1 settlement token at six decimals (atomic units)
+max_stake_units = 500_000_000     # 500 settlement tokens at six decimals (atomic units)
 
 [risk]
 # The risk module is the ONLY module authorized to green-light execution.
@@ -240,14 +240,21 @@ wallet_low_balance_lamports = 5_000_000      # ~0.005 SOL — a handful of ancho
 # lowers the bar the quote itself already had to clear; this only decides whether an
 # already-approved quote is ALSO allowed to risk real capital on Slip. Off by default: real
 # execution is an explicit opt-in, not an implicit consequence of quoting.
+# The executor additionally refuses mainnet-beta while Slip's buy instruction has no atomic
+# minimum-payout/slippage guard. Localnet/devnet remain available for real program evidence.
 enabled = false
 # Real capital only backs edges the desk is unusually confident in — deliberately higher
 # than strategy's ordinary quoting threshold, since publishing a recommendation and signing
 # a transaction that spends funds are not the same risk decision.
 min_edge_bps_to_execute = 250
+# A TxLINE edge does not prove a good price on a separate pari-mutuel venue. Recompute the
+# exact payout after adding Tissue's own stake and require this additional venue-specific edge.
+min_venue_edge_bps = 250
 max_stake_units_per_market = 50_000_000    # per single Slip market/outcome stake ceiling
 max_concurrent_markets = 3                  # distinct open (unresolved) Slip positions at once
 max_total_exposure_units = 120_000_000      # aggregate stake across every open Slip position
+# Poll canonical Slip state and resume resolve/claim/refund/void after process restarts.
+reconcile_interval_ms = 30_000
 
 [grader]
 # CLV graded whether matched or not (fill-independence, PRD §1.4). Closing line = last

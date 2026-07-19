@@ -4,17 +4,35 @@ import { FeeLadder } from "./feeLadder.js";
 import { deriveDailyOddsRootPda, deriveDailyScoresRootPda, epochDayFromTs, prepareOddsAnchor } from "./anchor.js";
 import type { QuoteProposal } from "../strategy/strategy.js";
 import type { ExternalIntent } from "./port.js";
-import { assertProofMatchesMessage, isConfirmedSignature, toBytes32, type OddsProofResponse } from "./anchorLive.js";
+import { assertProofMatchesMessage, booleanProgramReturn, isConfirmedSignature, toBytes32, type OddsProofResponse } from "./anchorLive.js";
 import { assertScoreProofMatchesMessage, type ScoreStatProofResponse } from "./scoreAnchorLive.js";
 import { normalizeOdds } from "../ingest/normalize.js";
 import { millis, type OddsMessage, type ScoreMessage } from "@tissue/shared";
+import { calculateSlipBuyQuote, deriveSlipMarketId, executeSlipBuy, mapMarketKeyToSlipRulebook, nextSlipLifecycleAction, stakeUnitsToAmount } from "./slipExec.js";
+import { address } from "@solana/kit";
+import { loadTxlineIdl } from "./txlineIdl.js";
 
 function proposal(side: "BACK" | "LAY", priceMilliOdds: number, sizeUnits: number): QuoteProposal {
-  return { marketKey: { market: "1X2" }, selection: "HOME", side, priceMilliOdds, sizeUnits, edgeBps: 300, radarClass: undefined, reason: "test" };
+  return { marketKey: { market: "1X2" }, selection: "HOME", side, priceMilliOdds, sizeUnits, edgeBps: 300, tissueProbBps: 6000, radarClass: undefined, reason: "test" };
 }
 function external(side: "BACK" | "LAY", priceMilliOdds: number, sizeUnits: number, owner = "counterparty"): ExternalIntent {
   return { owner, marketKey: { market: "1X2" }, selection: "HOME", side, priceMilliOdds, sizeUnits };
 }
+
+describe("network-bound TxLINE IDL", () => {
+  it("uses the same verified schema with the deployed address for each network", () => {
+    expect(loadTxlineIdl("devnet").address).toBe("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
+    expect(loadTxlineIdl("mainnet").address).toBe("9ExbZjAapQww1vfcisDmrngPinHTEfpjYRWMunJgcKaA");
+    expect(loadTxlineIdl("mainnet").instructions).toEqual(loadTxlineIdl("devnet").instructions);
+  });
+
+  it("decodes Solana's one-byte boolean program return and rejects missing evidence", () => {
+    const id = "9ExbZjAapQww1vfcisDmrngPinHTEfpjYRWMunJgcKaA";
+    expect(booleanProgramReturn([`Program return: ${id} AQ==`], id)).toBe(true);
+    expect(booleanProgramReturn([`Program return: ${id} AA==`], id)).toBe(false);
+    expect(() => booleanProgramReturn(["Program log: no return"], id)).toThrow("no boolean program return");
+  });
+});
 
 describe("simulated book — labeling", () => {
   it("marks every intent and fill as simulated", () => {
@@ -34,6 +52,70 @@ describe("simulated book — labeling", () => {
     expect(quote.simulated).toBe(false);
     expect(book.submitExternal(external("LAY", 2000, 100))).toEqual([]);
     expect(book.settle(2, 0)).toEqual({ perIntentPnlUnits: {}, totalPnlUnits: 0, simulated: false });
+  });
+});
+
+describe("Slip execution denomination and market identity", () => {
+  it("passes Tissue settlement-mint atomic units through exactly once", () => {
+    expect(stakeUnitsToAmount(1_000_000)).toBe(1_000_000n);
+    expect(stakeUnitsToAmount(50_000_000)).toBe(50_000_000n);
+    expect(() => stakeUnitsToAmount(0)).toThrow("positive safe integer");
+    expect(() => stakeUnitsToAmount(1.5)).toThrow("positive safe integer");
+  });
+
+  it("derives distinct market identities for 1X2 and each totals line", () => {
+    const fixtureId = "18209181";
+    const oneX2 = deriveSlipMarketId(fixtureId, { market: "1X2" });
+    const totals25 = deriveSlipMarketId(fixtureId, { market: "TOTALS", lineTimes10: 25 });
+    const totals35 = deriveSlipMarketId(fixtureId, { market: "TOTALS", lineTimes10: 35 });
+    expect(new Set([oneX2, totals25, totals35]).size).toBe(3);
+    expect(mapMarketKeyToSlipRulebook(fixtureId, { market: "TOTALS", lineTimes10: 25 }).outcomeLabels).toEqual(["Under", "Over"]);
+  });
+
+  it("prices Slip against exact post-stake pools and fees, not the pre-buy pool weight", () => {
+    const market = {
+      feeBps: 100,
+      tipBps: 0,
+      outcomes: [
+        { index: 0, label: "Under", pool: "1", poolAtomic: "1000000", probabilityBps: 5000, projectedPayout: null },
+        { index: 1, label: "Over", pool: "1", poolAtomic: "1000000", probabilityBps: 5000, projectedPayout: null },
+      ],
+    };
+    const quote = calculateSlipBuyQuote(market, 1, 2_000_000n, 8000);
+    // Post-buy pools are [1m,3m], net is 3.96m, so the 2m ticket pays 2.64m.
+    expect(quote.projectedPayoutAtomic).toBe(2_640_000n);
+    expect(quote.breakevenProbBps).toBe(7576);
+    expect(quote.venueEdgeBps).toBe(424);
+  });
+
+  it("gives Slip's on-chain timeout precedence over a delayed terminal proof", () => {
+    const terminal = { isFinal: true } as ScoreMessage;
+    expect(nextSlipLifecycleAction("open", terminal, 1_999_999_999_999, 2_000_000_000)).toBe("resolve");
+    expect(nextSlipLifecycleAction("open", terminal, 2_000_000_000_000, 2_000_000_000)).toBe("void");
+    expect(nextSlipLifecycleAction("open", undefined, 2_000_000_000_000, 2_000_000_000)).toBe("void");
+    expect(nextSlipLifecycleAction("resolved", terminal, 2_000_000_000_000, 2_000_000_000)).toBe("wait");
+  });
+
+  it("refuses mainnet buys while Slip lacks an atomic minimum-payout guard", async () => {
+    const result = await executeSlipBuy(
+      { marketKey: { market: "1X2" }, selection: "HOME", side: "BACK", sizeUnits: 1_000_000, edgeBps: 300, tissueProbBps: 6000 },
+      "18209181",
+      1,
+      1n,
+      {
+        rpcUrl: "https://example.invalid",
+        keypairPath: undefined,
+        minVenueEdgeBps: 250,
+        slipConfig: {
+          network: "mainnet-beta",
+          rpcUrl: "https://example.invalid",
+          programAddress: address("7gNEnFMDVhxFLSrtSctaPPCX7RcPbz1Lu5vtxvzobXFt"),
+          settlementMint: address("ELWTKspHKCnCfCiCiqYw1EDH77k8VCP74dK9qytG2Ujh"),
+        },
+      },
+    );
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("no atomic minimum-payout/slippage guard");
   });
 });
 
@@ -99,6 +181,7 @@ describe("settlement (simulated PnL)", () => {
       priceMilliOdds: 2000,
       sizeUnits: 100,
       edgeBps: 300,
+      tissueProbBps: 6000,
       radarClass: undefined,
       reason: "test",
     });

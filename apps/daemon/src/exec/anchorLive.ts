@@ -1,19 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import * as anchor from "@coral-xyz/anchor";
-import { Connection, Keypair } from "@solana/web3.js";
+import { ComputeBudgetProgram, Connection, Keypair } from "@solana/web3.js";
 import type { Network, OddsMessage } from "@tissue/shared";
 import { marketKeyString } from "@tissue/shared";
 import type { AuthCredentials } from "../ingest/txlineAuth.js";
 import { authHeaders } from "../ingest/txlineAuth.js";
 import { normalizeOdds } from "../ingest/normalize.js";
 import { deriveDailyOddsRootPda, PROGRAM_ID } from "./anchor.js";
-
-const cwdIdlPath = resolve(process.cwd(), "apps/daemon/idls/txoracle.json");
-const IDL_PATH = process.env.TISSUE_IDL_PATH
-  ?? (existsSync(cwdIdlPath) ? cwdIdlPath : fileURLToPath(new URL("../../idls/txoracle.json", import.meta.url)));
+import { loadTxlineIdl } from "./txlineIdl.js";
 
 export type AnchorMode = "view" | "transaction";
 export type AnchorStatus = "verified" | "confirmed" | "rejected" | "failed";
@@ -53,6 +48,35 @@ export function isConfirmedSignature(value: SignatureEvidence | null): boolean {
   return value !== null
     && value.err === null
     && (value.confirmationStatus === "confirmed" || value.confirmationStatus === "finalized");
+}
+
+export function booleanProgramReturn(logs: readonly string[], programId: string): boolean {
+  const prefix = `Program return: ${programId} `;
+  const line = [...logs].reverse().find((entry) => entry.startsWith(prefix));
+  if (!line) throw new Error(`TxLINE simulation produced no boolean program return; logs=${logs.slice(-4).join(" | ")}`);
+  const encoded = line.slice(prefix.length).trim();
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length !== 1 || (bytes[0] !== 0 && bytes[0] !== 1)) {
+    throw new Error(`TxLINE simulation returned invalid boolean data ${JSON.stringify(encoded)}`);
+  }
+  return bytes[0] === 1;
+}
+
+export function anchorErrorDetail(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const candidate = error as Error & {
+    readonly logs?: readonly string[];
+    readonly errorLogs?: readonly string[];
+    readonly simulationResponse?: { readonly value?: { readonly logs?: readonly string[]; readonly err?: unknown } };
+  };
+  const logs = candidate.logs ?? candidate.errorLogs ?? candidate.simulationResponse?.value?.logs;
+  const simulationError = candidate.simulationResponse?.value?.err;
+  const label = [error.name, error.message].filter(Boolean).join(": ") || "Error";
+  return [
+    label,
+    simulationError !== undefined ? `simulation=${JSON.stringify(simulationError)}` : "",
+    logs?.length ? `logs=${logs.slice(-8).join(" | ")}` : "",
+  ].filter(Boolean).join("; ");
 }
 
 export interface ProofNodeResponse {
@@ -221,7 +245,7 @@ export async function verifyOddsOnChain(
     const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(payer), {
       commitment: "confirmed",
     });
-    const idl = JSON.parse(readFileSync(IDL_PATH, "utf8"));
+    const idl = loadTxlineIdl(opts.network);
     const program = new anchor.Program(idl, provider);
     if (!program.programId.equals(PROGRAM_ID[opts.network])) {
       throw new Error(`IDL program ${program.programId.toBase58()} does not match configured TxLINE program`);
@@ -243,8 +267,10 @@ export async function verifyOddsOnChain(
         proofNodes(proof.subTreeProof),
         proofNodes(proof.mainTreeProof),
       )
-      .accounts({ dailyOddsMerkleRoots: derived.pda });
-    const result = await validationMethod().view();
+      .accounts({ dailyOddsMerkleRoots: derived.pda })
+      .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })]);
+    const simulation = await validationMethod().simulate();
+    const result = booleanProgramReturn(simulation.raw ?? [], program.programId.toBase58());
     if (result !== true) {
       return { ...base, rootPda, verifiedAt: Date.now(), status: "rejected", result: false };
     }
@@ -278,7 +304,7 @@ export async function verifyOddsOnChain(
       verifiedAt: Date.now(),
       status: "failed",
       result: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: anchorErrorDetail(error),
     };
   }
 }

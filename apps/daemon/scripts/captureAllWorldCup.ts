@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { authHeaders } from "../src/ingest/txlineAuth.js";
 import { fetchOddsSnapshot, fetchScoresHistorical, fetchScoresSnapshot, orderByFeed } from "../src/ingest/snapshots.js";
-import { writeCorpus, CORPUS_DIR } from "../src/ingest/corpus.js";
+import { CORPUS_DIR } from "../src/ingest/corpus.js";
 import { loadCredentials, loadLiveConfig } from "../src/runtime/config.js";
 
 /**

@@ -26,14 +26,19 @@ jobs:
       # Production dependency policy: known moderate-or-higher advisories fail the build.
       # npm retired pnpm's legacy audit endpoint in July 2026. Advisories still fail the build;
       # registry transport errors are reported without blocking the rest of the verification matrix.
-      - run: pnpm audit --prod --audit-level moderate --ignore-registry-errors
+      # GHSA-3gc7-fjrx-p6mg has no upstream release; patchedDependencies disables its native
+      # converter. SECURITY.md documents the exact mitigation tied to this explicit exception.
+      - run: pnpm audit --prod --audit-level moderate --ignore-registry-errors --ignore GHSA-3gc7-fjrx-p6mg
       - run: pnpm lint
       # typecheck every package (shared + daemon + dashboard)
       - run: pnpm -r typecheck
-      # pricing units, risk property tests, replay-equality CI, chaos drills
-      - run: pnpm --filter @tissue/daemon test:run
-      # analyst layer: read-only-by-construction + statelessness + LLM fallback
-      - run: pnpm --filter @tissue/analyst test:run
+      # Every workspace package: SDK consumer, pricing/risk/replay, analyst, and dashboard units.
+      - run: pnpm test
+      # Real Chromium over the Next HTTP boundary. Install the exact Playwright-pinned browser.
+      - run: pnpm --filter @tissue/dashboard exec playwright install --with-deps chromium
+      - run: pnpm --filter @tissue/dashboard test:e2e
+      # Real signed buy -> TxLINE-proof resolve -> claim against the vendored Slip program.
+      - run: pnpm --filter @tissue/daemon test:slip:surfpool
       # Compile the deployable dashboard, not only its isolated type graph.
       - run: pnpm build
       # Exercise the compiled daemon and standalone analyst artifacts without tsx/dev tooling.
@@ -43,3 +48,4 @@ jobs:
       # Deployment artifacts are part of the product surface and must remain buildable.
       - run: docker compose config
       - run: docker compose build
+      - run: pnpm verify:containers

@@ -27,6 +27,7 @@ function proposal(sizeUnits: number, market: MarketId = "1X2"): QuoteProposal {
     priceMilliOdds: 2000,
     sizeUnits,
     edgeBps: 300,
+    tissueProbBps: 6000,
     radarClass: undefined,
     reason: "test",
   };
@@ -90,6 +91,13 @@ describe("risk gates — THE only module authorized to green-light execution", (
     const result = evaluateRisk([proposal(over)], ctx({}), policy);
     expect(result.rejected).toEqual([{ proposal: expect.objectContaining({ sizeUnits: over }), reason: "market-exposure-cap" }]);
     expect(result.approved).toHaveLength(0);
+  });
+
+  it("caps LAY maximum liability rather than its smaller displayed backer stake", () => {
+    const lay = { ...proposal(600_000_000), side: "LAY" as const, priceMilliOdds: 5000 };
+    const result = evaluateRisk([lay], ctx({}), policy);
+    expect(lay.sizeUnits).toBeLessThan(policy.risk.exposure_cap_per_market_units);
+    expect(result.rejected[0]!.reason).toBe("market-exposure-cap");
   });
 
   it("rejects a proposal that would breach the per-fixture exposure cap even under the per-market cap", () => {

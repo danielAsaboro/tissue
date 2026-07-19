@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { millis, milliOdds, units, type Intent } from "@tissue/shared";
+import { bps, millis, milliOdds, units, type Intent } from "@tissue/shared";
 import { restingQuoteAgeMs, staleQuoteSpreadMult, type StaleQuoteConfig } from "./staleQuote.js";
 
 function intent(o: Partial<Intent>): Intent {
@@ -12,6 +12,8 @@ function intent(o: Partial<Intent>): Intent {
     priceMilliOdds: milliOdds(2000),
     sizeUnits: units(100),
     filledUnits: units(0),
+    tissueProbBps: bps(6000),
+    edgeBps: 300,
     status: "Posted",
     simulated: true,
     createdMsgId: "m1",

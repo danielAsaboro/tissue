@@ -6,7 +6,7 @@ import { CORPUS_DIR, readCorpusFile } from "../ingest/corpus.js";
 import { grade } from "../grader/grader.js";
 import { runEngine } from "../replay/engine.js";
 
-interface EvaluationRow {
+export interface EvaluationRow {
   readonly fixtureId: string;
   readonly messages: number;
   readonly decisions: number;

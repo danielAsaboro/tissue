@@ -163,9 +163,12 @@ export interface Policy {
     readonly slip: {
       readonly enabled: boolean;
       readonly min_edge_bps_to_execute: number;
+      /** Minimum Tissue edge over Slip's exact post-stake break-even probability. */
+      readonly min_venue_edge_bps: number;
       readonly max_stake_units_per_market: number;
       readonly max_concurrent_markets: number;
       readonly max_total_exposure_units: number;
+      readonly reconcile_interval_ms: number;
     };
   };
   readonly grader: {
@@ -306,9 +309,11 @@ const POLICY_SHAPE: Shape = {
     slip: {
       enabled: "boolean",
       min_edge_bps_to_execute: "number",
+      min_venue_edge_bps: "number",
       max_stake_units_per_market: "number",
       max_concurrent_markets: "number",
       max_total_exposure_units: "number",
+      reconcile_interval_ms: "number",
     },
   },
   grader: { clv_reference: "string", brier_calibration_bins: "number" },
@@ -473,6 +478,10 @@ function validatePolicy(p: Policy): void {
     problems.push("exec.slip.max_concurrent_markets must be > 0");
   if (p.exec.slip.max_total_exposure_units < p.exec.slip.max_stake_units_per_market)
     problems.push("exec.slip.max_total_exposure_units must be >= exec.slip.max_stake_units_per_market");
+  if (p.exec.slip.reconcile_interval_ms <= 0)
+    problems.push("exec.slip.reconcile_interval_ms must be > 0");
+  if (p.exec.slip.min_venue_edge_bps < 0 || p.exec.slip.min_venue_edge_bps > 10_000)
+    problems.push("exec.slip.min_venue_edge_bps must be between 0 and 10000");
   if (p.grader.brier_calibration_bins <= 0) problems.push("grader.brier_calibration_bins must be > 0");
   if (problems.length) throw new Error(`Invalid policy.toml: ${problems.join("; ")}`);
 }

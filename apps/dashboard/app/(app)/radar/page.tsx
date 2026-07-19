@@ -22,7 +22,7 @@ export default async function RadarPage() {
       <section className="panel edge-strip">
         <h2>Signal classes</h2>
         <p className="muted" style={{ marginBottom: 12 }}>
-          Every market reaction is classified against independent tissue price — not LLM intuition.
+          Each supported-market reaction is classified against independent tissue price — not LLM intuition.
           Unexplained-movement and informed-flow are the two classes that force a market halt
           (adverse selection); every other class only conditions spread/size.
         </p>

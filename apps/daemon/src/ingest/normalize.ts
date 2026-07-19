@@ -95,13 +95,22 @@ export function normalizeScores(raw: RawScores, network: Network): ScoreMessage 
   const awayReds = statValue(stats, PERIOD_PREFIX.TOTAL + STAT_KEY.P2_RED);
 
   const explicitMinute = pick<number | undefined>(r, ["Minute", "minute"], undefined);
-  const minute = explicitMinute ?? PHASE_START_MINUTE[statusId] ?? 0;
+  const clock = pick<Record<string, unknown>>(r, ["Clock", "clock"], {});
+  const clockSeconds = Number(pick<unknown>(clock, ["Seconds", "seconds"], Number.NaN));
+  const clockMinute = Number.isFinite(clockSeconds) && clockSeconds >= 0
+    ? Math.floor(clockSeconds / 60)
+    : undefined;
+  const minute = explicitMinute ?? clockMinute ?? PHASE_START_MINUTE[statusId] ?? 0;
 
   // Momentary pressure from a free_kick / shot event if this message is one.
   const action = String(pick(r, ["action", "Action", "Type"], ""));
   const data = pick<Record<string, unknown>>(r, ["Data", "data"], {});
   const freeKickType = pick<string | undefined>(data, ["FreeKickType", "freeKickType"], undefined);
-  const participant = pick<number>(data, ["Participant", "participant"], 0);
+  const participant = pick<number>(
+    r,
+    ["Participant", "participant"],
+    pick<number>(data, ["Participant", "participant"], 0),
+  );
   let home: PressureClass = "none";
   let away: PressureClass = "none";
   if (action === "free_kick" || action === "shot") {
@@ -110,7 +119,16 @@ export function normalizeScores(raw: RawScores, network: Network): ScoreMessage 
     else home = cls;
   }
 
-  const msgId = String(pick(r, ["Id", "id"], "")) || `${fixtureId}:s:${globalSeq || seq}`;
+  // `Id` is the action identity and is intentionally reused by amend/end messages. The
+  // feed sequence identifies the delivery; using Id here silently deduplicates real VAR,
+  // injury, and other amendments before they reach state/radar processing.
+  const explicitMessageId = String(pick(r, ["MessageId", "messageId"], ""));
+  const deliverySequence = globalSeq || seq;
+  const actionId = String(pick(r, ["Id", "id"], ""));
+  const msgId = explicitMessageId
+    || (Number.isSafeInteger(deliverySequence) && deliverySequence > 0
+      ? `${fixtureId}:s:${deliverySequence}`
+      : actionId || `${fixtureId}:s:${ts}`);
 
   return {
     kind: "score",
@@ -158,9 +176,9 @@ function parseLine(marketParameters?: string): number | undefined {
 function canonicalSelection(name: string, market: MarketKey["market"]): string | null {
   const n = name.trim().toLowerCase();
   if (market === "1X2") {
-    if (n === "1" || n === "home" || n === "h") return "HOME";
+    if (n === "1" || n === "home" || n === "h" || n === "part1") return "HOME";
     if (n === "x" || n === "draw" || n === "d") return "DRAW";
-    if (n === "2" || n === "away" || n === "a") return "AWAY";
+    if (n === "2" || n === "away" || n === "a" || n === "part2") return "AWAY";
   } else {
     if (n.startsWith("o") || n === "over") return "OVER";
     if (n.startsWith("u") || n === "under") return "UNDER";

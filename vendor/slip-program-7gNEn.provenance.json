@@ -1,0 +1,12 @@
+{
+  "programId": "7gNEnFMDVhxFLSrtSctaPPCX7RcPbz1Lu5vtxvzobXFt",
+  "artifact": "slip-program-7gNEn.so",
+  "idl": "slip-program-7gNEn.idl.json",
+  "slipCommit": "e125368b313d9677b55197ba9ebb690bc2e0106c",
+  "deploymentSignature": "38KypRo3UFkoce8x1eEXrYmEH3TQHPsaEWZmCqHcbMbRxd7zUg3U6KsfqvKTCe4bEPkGWRhZj1NxHGHoYurrhbfn",
+  "sha256": {
+    "slip-program-7gNEn.so": "13b50bc73b2899bd383a450379c6809a7021265f55003c41846c92d6ad66f605",
+    "slip-program-7gNEn.idl.json": "fe7c795aa6708db299ec2801f4bc9c33bf77c50c65e8c0d14f2854614a601462"
+  },
+  "note": "The SBF and IDL are copied byte-for-byte from the sibling Slip repository's hardened unified deployment build. Tissue deploys this exact SBF in its opt-in Surfpool lifecycle test and separately verifies the public devnet program's unified capability marker through the packed SDK."
+}

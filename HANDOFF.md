@@ -3,6 +3,104 @@
 Living state doc. Updated at every phase boundary. If you are picking this repo up,
 read this top-to-bottom, then `GROUND-TRUTH.md`, then `internal/tissue-prd.md` (the spec).
 
+**FullTime creates the conversation. Slip turns it into an agreement. Tissue finds the fair price and trades it across supported markets.**
+
+Tissue currently prices 1X2 and totals. Its new generic venue boundary covers normalized
+discovery/identity, fair-value and fee/liquidity economics, capital policy, signed submission,
+confirmation/reconciliation, settlement/claim, and durable evidence. Only the real Slip
+adapter is registered. Polymarket and other order books are future adapters, not completed or
+exposed integrations.
+
+## 2026-07-19 hardened Slip public-devnet migration
+
+- Tissue now consumes Slip's hardened unified ABI and public devnet program
+  `7gNEnFMDVhxFLSrtSctaPPCX7RcPbz1Lu5vtxvzobXFt` instead of the older `8VNZ...` build.
+  Exact SBF, IDL, packed-SDK, base-commit, deployment-signature, and compatibility-patch
+  hashes are recorded under `vendor/*.provenance.json`.
+- A read-only public-devnet check through Tissue's packed consumer returned
+  `unifiedMarkets: true` and decoded five real markets at settlement mint `9GGUMX...Rnj`.
+  Observed examples were `2NNZXs...cwr3` (fixture 18209181, voided),
+  `42JSkL...W5Fz` (fixture 18257739, open), and `B8C7cf...gZn5`
+  (fixture 18209181, voided).
+- The exact hardened SBF passed Tissue's real Surfpool execution lifecycle: independent
+  two-sided provisioning, signed `buyTicket`, protocol-valid TxLINE proof resolution, token
+  payout, and retry reconciliation. Tissue removed the obsolete race/`Proposed` decoder
+  workaround, exposes Slip's resolution-evidence commitment, and gives `void_at` precedence
+  over delayed terminal proofs.
+- The migration exposed a packed-SDK defect masked by Slip's Vite tests: Node ESM could not
+  load Codama's extensionless generated barrels. The sibling Slip workspace now fixes
+  generated specifiers after Codama runs and before every build, and verifies the built
+  entrypoint with Node. That Slip patch remains an uncommitted visible change and must be
+  committed before publishing a new SDK artifact.
+- The Surfpool lifecycle now enters through `SlipVenueAdapter` and the shared
+  `executeThroughVenue` stages rather than calling the Slip executor directly. Runtime state,
+  append-only journaling, API records, and dashboard rows use venue-neutral identifiers while
+  preserving the retired Slip journal as read-only migration evidence.
+- Final verification on 2026-07-19: `pnpm test` passed 364 tests (10 explicitly gated),
+  `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm verify:runtime`, and deterministic
+  `pnpm --filter @tissue/daemon replay` passed. The opt-in real lifecycle command
+  `pnpm --filter @tissue/daemon test:slip:surfpool` passed 1/1 against the pinned SBF.
+  A fresh credential-free public-devnet consumer run again returned
+  `unifiedMarkets: true` and five decoded markets. A Tissue-funded public-devnet write was
+  not attempted because no owner-authorized funded keypair was supplied.
+
+## 2026-07-19 adversarial execution and production hardening
+
+- Recovered the workspace's real TxLINE research corpus at
+  `../resources/fixtures/world-cup-2026` instead of incorrectly treating the project-local
+  `corpus/` directory as the whole evidence universe. Added a local authenticated replay
+  service that verifies every served file's SHA-256/byte length and feeds captured HTTP/SSE
+  bytes through the production snapshot fetchers and normalizers.
+- The archive exposed four live-normalization defects now fixed: real 1X2 selections are
+  `part1/draw/part2`; match minute comes from `Clock.Seconds`; pressure ownership is a
+  top-level `Participant`; and action `Id` repeats across amendments while delivery `Seq`
+  is unique. The old adapter discarded odds, mis-timed events, assigned away pressure to
+  home, and deduplicated amended events.
+- The corrected deterministic evaluation covers 100 completed fixtures, 109,382 normalized
+  messages, and 7,192 graded quotes. Weighted CLV is +225bps on both the fixed 61-fixture
+  calibration set and 39-fixture holdout. Holdout Brier improves on the opening-market
+  baseline (0.197298 vs 0.220753); calibration Brier regresses (0.174960 vs 0.161049), so
+  the evidence is promising but not represented as uniform calibration superiority.
+
+- Corrected exchange risk economics: Kelly's LAY output is liability, not displayed backer
+  volume; lay maximum loss is now used by every cap, and filled unresolved positions remain
+  in exposure instead of freeing the same limit for reuse. Each ledger intent now carries
+  its own Tissue probability and edge rather than borrowing an unrelated record-level top edge.
+- Slip rejects LAY intents instead of buying the opposite economic position, accumulates
+  existing stake in per-market caps, and requires a positive edge over the exact post-stake,
+  post-fee pari-mutuel break-even probability. Mainnet is refused because Slip's current
+  `buyTicket` instruction has no atomic minimum-payout/slippage guard; localnet/devnet evidence
+  remains real, but unprotected mainnet capital is not presented as production-safe.
+- Fixed a 1,000,000x real-capital sizing bug: policy stake units are now explicitly the
+  settlement mint's atomic units and are passed to Slip as raw `bigint`, never reparsed as
+  human token text.
+- Slip execution now derives the exact market PDA from fixture + market + totals line,
+  verifies its full rulebook, and refuses missing or one-sided pools. It no longer creates
+  an empty market and immediately buys its own sole side (which Slip correctly voids).
+- Added restart-safe resolve/claim and void/refund reconciliation. It fetches the two final
+  TxLINE stat proofs, submits real instructions, polls canonical account state at the
+  confirmed context slot, verifies the ticket was actually claimed, and journals every
+  lifecycle transition. The dashboard exposes buy/resolve/claim/void/refund signatures.
+- The real Surfpool gate now proves an independently provisioned/two-sided market, exact
+  2,000,000-atomic-unit Tissue stake, TxLINE-proof resolution, payout, and idempotent rerun.
+- Corrected the opening model: it accumulates both pre-match streams independent of arrival
+  order and freezes/commits only when play begins. Feed-gap and proof-rate kills now cancel
+  open intents immediately and remain latched until operator restart. Proof verification is
+  ordered per fixture but concurrent across unrelated fixtures, with a bounded overload kill.
+- `/health` now returns 503 when unhealthy; daemon container readiness uses `/ready`.
+  Docker build contexts now contain `packages/slip` and the required vendored artifacts.
+- Clean Docker builds exposed three more missing inputs: the patched-dependency file,
+  `.npmrc` lockfile settings, and the analyst's Slip workspace source. All three images now
+  build from scratch and `pnpm verify:containers` passes their non-root/runtime/header and
+  fail-closed configuration checks.
+- Mitigated unpatched `GHSA-3gc7-fjrx-p6mg` by forcing `bigint-buffer` onto its memory-safe
+  JavaScript implementation via `patchedDependencies`; the single audit exception is explicit
+  and documented in `SECURITY.md`.
+- The synthetic stress replay still loses −183,548,499 simulated atomic units after corrected
+  liability accounting; it remains a deterministic failure-path fixture, not evidence of
+  strategy quality. Real strategy evidence is the separately labelled, no-fabricated-fill
+  historical evaluation in `.superstack/world-cup-evaluation.json`.
+
 ## 2026-07-15 AI SDK 7 and CI compatibility update
 
 - The production analyst model boundary now uses `ai@7.0.28` with the official
@@ -42,9 +140,10 @@ Edge-case fixes:
   fixture (`policy.risk.portfolio_*`, `EngineSession.kill()`, `runtime/liveDesk.ts`).
 - Cross-stream (scores/odds) clock skew is now detected and recorded (`EngineResult.clockSkewEvents`)
   instead of silently clamped to "fresh."
-- `evaluate:real` gap closed with a genuine real mainnet corpus (fixture `17588302`) captured
-  via a new `apps/daemon/scripts/captureCorpus.ts`, reusing the daemon's own reviewed
-  config/credentials/snapshot boundary — no fabricated data.
+- Historical notes previously claimed a genuine mainnet corpus for fixture `17588302`, but
+  that corpus is absent from the checked-out repository and therefore is not reproducible
+  evidence. `captureCorpus.ts` remains the real capture boundary; `evaluate:real` correctly
+  fails until independently verifiable real messages are captured again.
 
 Four new signals (all policy-driven, all with dedicated tests):
 - **Mutual-danger regime** (`state/matchState.ts`, `model.mutual_danger`): sustained
@@ -104,8 +203,9 @@ real browser (screenshot-checked), not just typechecked.
 - A protocol-valid local JSON-RPC fixture exercises the packed SDK's account codec, program
   capability detection, PDA/owner/mint checks, bigint projections, and real buy-instruction
   construction. A read-only July 14, 2026 check through Tissue's installed tarball returned
-  `{"network":"devnet","unifiedMarkets":false}` for the published Slip program, so public
-  controls remain gated until the upgrade authority deploys and a real lifecycle passes.
+  `{"network":"devnet","unifiedMarkets":false}` for the program published at that time. This is
+  historical evidence, superseded by the hardened July 19 deployment/read result at the top
+  of this document; it is not the present capability state.
 - The live agent path is also verified, not only scripted: `qwen3.6:35b-mlx` on the MBP used the
   `inspect_slip_market` MCP tool, crossed the protocol-valid local RPC boundary through the packed
   refreshed packed SDK, and returned the grounded leading outcome, 5,000 bps pool weight, and
@@ -169,13 +269,14 @@ Lanes are marked inline as `[LANE: Daniel]` / `[LANE: Tim]` / `[LANE: shared]`.
 
 ## TL;DR
 
-All product phases now have a real vertical slice. **228 tests are green** (3 slip + 208 daemon
-+ 17 analyst); lint and all packages
-typecheck; `replay(corpus) === ledger` is asserted in CI. The T1 gate failed because no
+All product phases now have a real vertical slice. The current default matrix has **364 tests
+green** (3 Slip + 309 daemon + 39 analyst + 13 dashboard), with 10 explicitly gated external
+or local-chain cases; Chromium E2E adds 20 passing cases. Lint and all packages typecheck;
+`replay(corpus) === ledger` is asserted in CI. The T1 gate failed because no
 on-chain intent-book exists and was resolved by decision **D-001**: live quote publication,
 real `validate_odds` verification, and matching simulation isolated to explicit replay.
 Read `GROUND-TRUTH.md`, `REMAINING.md`, and `RUNBOOK.md`. Entry points are `pnpm run ci`,
-`pnpm daemon`, `pnpm replay`, and `pnpm evaluate:real`.
+`pnpm daemon`, `pnpm replay`, `pnpm evaluate:real`, and `pnpm evaluate:fixtures -- --all`.
 
 ## Current state
 
@@ -193,7 +294,7 @@ Read `GROUND-TRUTH.md`, `REMAINING.md`, and `RUNBOOK.md`. Entry points are `pnpm
 | 9 Replay lab | ✅ done | replayCli (multi-speed); determinism confirmed; feed-gap chaos drill; simulation explicit and isolated |
 | + Analyst layer | ✅ done | `apps/analyst`: 3 constrained skills, 7 read-only MCP tools, Groq→DGrid LLM + agent; dashboard "Ask Tissue". **Additive, read-only, never near the decision path** |
 | + Slip consumer | ✅ local contract | Packed SDK readers/watchers/math/action builders plus analyst market tools. Public devnet use stays gated until the unified binary is detected. |
-| + Slip execution | ✅ done | `exec/slipExec.ts`: risk-approved decisions land as real signed transactions on Slip, gated by a second stricter capital-risk check (`risk/gates.ts::evaluateSlipExecution`, off by default). Full lifecycle (create/buy/resolve/claim) proven against a local Surfpool instance running the real compiled program — see D-010. |
+| + Slip execution | ⚠️ localnet/devnet only | `exec/slipExec.ts`: BACK-only, exact post-stake venue economics, cumulative exposure caps, and full lifecycle proven against the real program on Surfpool. Mainnet is refused until Slip supplies atomic minimum-payout protection — see D-010. |
 
 ---
 
@@ -213,8 +314,10 @@ The sponsor devnet program has **no intent-book** (`create_intent`/`execute_matc
   no fill exists unless a future venue acknowledges it. No live PnL is synthesized.
 - **Replay matching is isolated.** The deterministic simulated book remains available only
   under explicit replay mode for research and failure tests.
-- **Swap-in boundary.** The `exec/` interface is designed so a future real permissionless
-  orderbook (sponsor: "in preparation") drops in behind the same port, not a rewrite.
+- **Venue boundary.** `exec/venue.ts` now carries real normalized discovery, economics,
+  authorization, signing, reconciliation, settlement, and evidence. Slip is its only enabled
+  adapter; a future permissionless order book must implement this full boundary before it is
+  registered or exposed.
 
 This preserves fill-independence: CLV grades every published quote against the close without
 requiring a fictional fill. Full detail + evidence are in `GROUND-TRUTH.md` and `feedback.md`.
@@ -317,19 +420,25 @@ risk-approved decision to a real Slip market/outcome band, checks it against a s
 stricter, off-by-default capital-risk gate (`risk/gates.ts::evaluateSlipExecution` — its
 own edge threshold and exposure caps, layered on top of the existing quote-publication
 gate, not a replacement for it), then signs and submits a real `buyTicket` transaction
-with the same keypair used for on-chain anchoring. Found and fixed a real bug along the
+with the same keypair used for on-chain anchoring on localnet/devnet. It refuses LAY
+inversion, applies exact post-stake venue-edge checks, and disables mainnet because the
+current instruction has no atomic minimum-payout guard. Found and fixed a real bug along the
 way: the vendored `@slip/sdk` tarball had been packed before Slip's `settlement_mode`
 field was added to `MarketExpression` on both the Rust program and the SDK's own
 committed codegen — the stale packed encoder silently omitted the field, corrupting
 every transaction built through it (Anchor error 102, `InstructionDidNotDeserialize`).
-No Slip source changes were needed; fixed by rebuilding and repacking from Slip's
-current, already-correct `main`. Rehearsed the full lifecycle — create market, buy,
-resolve from a real constructed score proof, claim, each step independently verified
+That first issue needed no Slip source change; it was fixed by rebuilding and repacking the
+then-current source. The later hardened migration did require the Node ESM packaging fix
+documented at the top of this handoff. Rehearsed the full lifecycle — independently provision a
+two-sided market, buy, resolve from a protocol-valid constructed score proof, claim, and
+retry reconciliation, each step independently verified
 on-chain — against a local Surfpool instance running the real compiled Slip program
 (`apps/daemon/src/exec/slipExec.surfpool.test.ts`,
 `pnpm --filter @tissue/daemon test:slip:surfpool`). Evidence surfaces on `/state`,
-`/record`, and the dashboard's `/decisions` page. Not yet run against a public devnet
-deployment of Slip's program — see `REMAINING.md` item 7.
+`/record`, and the dashboard's `/decisions` page. The packed reader/capability boundary is
+also verified against the real public devnet deployment; no additional owner-funded write
+was submitted from Tissue. Mainnet production-capital use remains blocked on atomic venue
+slippage protection.
 
 ## Open questions
 - [x] **Free tier has no 1X2 market.** Totals-only bootstrap now prices and quotes the actual

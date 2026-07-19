@@ -15,6 +15,8 @@ Three services, one shared evidence store, two on-chain surfaces.
 ```mermaid
 flowchart LR
     TX["TxLINE\nscores SSE + odds SSE + REST proofs"]
+    ARCHIVE["Verified TxLINE archive\nraw HTTP/SSE · SHA-256 provenance"]
+    REPLAY["Local archive service\nauthenticated HTTP/SSE boundary"]
 
     subgraph runtime["Docker Compose"]
         D["daemon\ningest · verify · price · risk · quote · ledger · anchor"]
@@ -28,6 +30,8 @@ flowchart LR
     SLIP["Slip\nreal settlement venue\ncreateMarket / buyTicket / resolve / claim"]
 
     TX -->|SSE + REST| D
+    ARCHIVE -->|verified captured bytes| REPLAY
+    REPLAY -->|same fetchers + normalizers| D
     D -->|writes| CORPUS
     D -->|serves /state /record /ledger/proof ...| DASH
     D -->|analyst export JSON| A
@@ -47,6 +51,10 @@ Three invariants the runtime enforces, not just documents:
    opened with `readOnly: true` at the driver level, and no write/execute/post tool
    exists anywhere in its tool registry — tested, not just claimed
    (`apps/analyst/src/adversarial.test.ts`).
+4. **Historical replay does not bypass ingestion.** The workspace archive is immutable;
+   adjacent provenance must match byte length and SHA-256 before a local authenticated
+   service will serve captured JSON/SSE. Production snapshot fetchers and normalizers consume
+   that service. Reports label the July 14 capture as historical and never as current-live.
 
 ## 2. The decision pipeline
 
@@ -137,7 +145,18 @@ endpoints and validated on-chain (`validate_odds` / `validate_stat`) **before** 
 enter the pipeline at all (§2) — this is *input* verification, distinct from the
 *commitment* anchoring above.
 
-## 5. Real execution on Slip
+## 5. Venue execution boundary; Slip is the only enabled adapter
+
+**FullTime creates the conversation. Slip turns it into an agreement. Tissue finds the fair price and trades it across supported markets.**
+
+The shared `exec/venue.ts` contract separates normalized market identity and discovery,
+fair-value comparison, venue fee/liquidity economics, capital authorization, signed
+submission, confirmation/reconciliation, settlement/claim, and durable evidence. The daemon
+currently registers exactly one implementation: `SlipVenueAdapter`. External sports-market
+venues such as Polymarket and other order books remain future adapters; Tissue exposes no
+control, liquidity, execution result, or success claim for them. The pricing side likewise
+supports only its implemented market families, presently 1X2 and totals—not arbitrary
+FullTime or Slip questions.
 
 TxLINE's own on-chain program (`txoracle`) is a data-oracle/subscription/validation
 program — `subscribe`, `validate_odds`, `validate_stat`, `insert_*_root`, pricing-matrix
@@ -161,15 +180,19 @@ sequenceDiagram
 
     Engine->>RiskGate: proposed quote (edge, size, market)
     RiskGate-->>Engine: approved intent
-    Engine->>SlipGate: candidate (edge, size, market)
+    Engine->>SlipGate: BACK candidate (per-intent probability, edge, size, market)
     alt below edge threshold or over exposure caps
         SlipGate-->>Daemon: rejected — evidence recorded, no transaction
     else cleared
         SlipGate-->>Daemon: approved
-        Daemon->>Slip: find-or-create market for this fixture/MarketKey
-        Slip-->>Daemon: confirmed createMarket tx (or existing market)
+        Daemon->>Slip: adapter discovers exact canonical market PDA + rulebook + opposing liquidity
+        Slip-->>Daemon: existing externally provisioned two-sided market
+        Daemon->>Daemon: exact post-stake payout + venue-edge gate
         Daemon->>Slip: buyTicket(outcomeIndex, stakeAmount)
         Slip-->>Daemon: confirmed buyTicket tx, real ticket address
+        Daemon->>Slip: resolveMarket(final TxLINE home/away proofs)
+        Daemon->>Slip: claimTicket (or voidMarket + claimRefund)
+        Slip-->>Daemon: confirmed terminal account state + payout/refund
     end
 ```
 
@@ -177,10 +200,20 @@ Slip's market model is pool-based (stake into an outcome band before `entryDeadl
 resolve from a real TxLINE score proof, claim) — structurally different from the
 intent-book shape the replay `ExecPort` uses (`postIntent`/`replaceIntent`/`cancelIntent`),
 so this is a parallel execution path alongside quote-publication, not a replacement for it.
-Rehearsed end-to-end (create → buy → resolve from a real score proof → claim, with
+Every candidate is BACK-only and retains its exact Tissue probability/TxLINE edge. Before a
+localnet/devnet buy, the adapter recomputes post-stake pools, fees, payout, break-even
+probability, and venue edge; the dashboard journals those economics. Mainnet is deliberately
+disabled because Slip's current `buyTicket` instruction cannot atomically enforce a minimum
+payout. A read-then-buy check is not slippage protection under concurrent transactions.
+The daemon deliberately refuses to create and self-fill an empty pool: Slip voids a market
+unless at least two outcomes are funded, so that path is not a defensible trade. Rehearsed
+end-to-end through the venue-adapter boundary (independent provision + opposing stake → Tissue buy → resolve from a real score proof → claim, with
 independent on-chain balance checks) against a local Surfpool instance running the real
-compiled Slip program (`vendor/slip-program-8VNZ5.so`) —
+compiled Slip program (`vendor/slip-program-7gNEn.so`) —
 `apps/daemon/src/exec/slipExec.surfpool.test.ts`.
+The same packed consumer independently detects the hardened public devnet deployment's
+unified capability marker and decodes its real markets; this public check is read-only and
+is not presented as a second owner-funded write lifecycle.
 
 ## 6. Verification — how a third party checks any of this
 
@@ -227,7 +260,8 @@ specification.
 
 Every layer above has a corresponding real test — not a mock of the unit under test.
 
-- **Default suite** (daemon: 291 tests, runs in every `pnpm run ci`): includes adversarial
+- **Default suite** (364 tests passing across Slip, daemon, analyst, and dashboard; 10
+  explicitly external/local-chain cases gated): includes adversarial
   suites that feed the ingest pipeline and the analyst's LLM+MCP loop deliberately
   malformed or hostile input, asserting the system fails closed. This is how real bugs were
   found and fixed during hardening — NaN-poisoned odds consensus; a blank fallback answer
@@ -238,7 +272,8 @@ Every layer above has a corresponding real test — not a mock of the unit under
   scenarios against a local Surfpool validator — confirmation, insufficient balance,
   unreachable RPC, concurrent submissions — without racing public devnet's rate limits.
 - **Local Slip execution test** (opt-in, `test:slip:surfpool`): the full real lifecycle —
-  create market, buy, resolve from a real score proof, claim — against a local Surfpool
+  independently provision a two-sided market, buy an exact atomic stake, resolve from a
+  protocol-valid score proof, claim, and retry idempotently — against a local Surfpool
   instance running the actual compiled Slip program, with independent on-chain balance
   checks at each step.
 - **Dashboard E2E** (opt-in, `test:e2e`): real Chromium against a real Next.js server,

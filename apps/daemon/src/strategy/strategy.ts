@@ -16,7 +16,7 @@ import {
 import type { Policy } from "../config/policy.js";
 import type { PricedMarkets } from "../tissue/price.js";
 import { reservationQuote } from "./reservation.js";
-import { fractionalKellyStake, type KellyConfig } from "./kelly.js";
+import { fractionalKellyStake, layBackerStakeFromLiability, type KellyConfig } from "./kelly.js";
 import { restingQuoteAgeMs } from "./staleQuote.js";
 
 /**
@@ -35,6 +35,7 @@ export interface QuoteProposal {
   readonly priceMilliOdds: number;
   readonly sizeUnits: number;
   readonly edgeBps: number;
+  readonly tissueProbBps: number;
   readonly radarClass: RadarClass | undefined;
   readonly reason: string;
 }
@@ -140,8 +141,12 @@ export function proposeQuotes(inp: StrategyInputs, policy: Policy): QuoteProposa
     }
     // Laying profits when true prob is BELOW the lay-implied prob; size on (1 − pTrue).
     const layImplied = milliOddsToProb(layOdds) / 10000;
-    const layStake = fractionalKellyStake(1 - pTrue, 1 / Math.max(1 - layImplied, 1e-4), kelly);
-    if (layStake > 0 && inBand(layOdds, policy)) {
+    const layLiability = fractionalKellyStake(1 - pTrue, 1 / Math.max(1 - layImplied, 1e-4), kelly);
+    const layStake = Math.min(
+      policy.sizing.max_stake_units,
+      layBackerStakeFromLiability(layLiability, layOdds),
+    );
+    if (layStake >= policy.sizing.min_stake_units && inBand(layOdds, policy)) {
       proposals.push(quote(e, "LAY", layOdds, layStake, inp.radarClass, "lay-spread"));
     }
   }
@@ -163,6 +168,7 @@ function quote(
     priceMilliOdds,
     sizeUnits,
     edgeBps: e.edgeBps,
+    tissueProbBps: e.tissueProb,
     radarClass,
     reason,
   };

@@ -16,13 +16,15 @@ function candidate(o: Partial<SlipTradeCandidate> = {}): SlipTradeCandidate {
   return {
     marketKey: { market: "1X2" as MarketId },
     selection: "HOME" as Selection,
+    side: "BACK",
     sizeUnits: 1_000_000,
     edgeBps: 300,
+    tissueProbBps: 6000,
     ...o,
   };
 }
 
-const emptyCtx: SlipExecutionContext = { openMarketCount: 0, totalStakedUnits: 0 };
+const emptyCtx: SlipExecutionContext = { stakedByMarketUnits: {}, totalStakedUnits: 0 };
 
 describe("evaluateSlipExecution — second, stricter gate for real capital on Slip", () => {
   it("rejects everything when disabled, regardless of how favorable the candidates are", () => {
@@ -47,6 +49,15 @@ describe("evaluateSlipExecution — second, stricter gate for real capital on Sl
     expect(result.rejected[0]!.reason).toBe("edge-below-slip-threshold");
   });
 
+  it("rejects LAY and negative-edge intents because Slip only buys the named outcome", () => {
+    const policy = policyWithSlip({ min_edge_bps_to_execute: 250 });
+    const lay = evaluateSlipExecution([candidate({ side: "LAY", edgeBps: -400 })], emptyCtx, policy);
+    expect(lay.approved).toHaveLength(0);
+    expect(lay.rejected[0]!.reason).toBe("slip-does-not-support-lay");
+    const negativeBack = evaluateSlipExecution([candidate({ side: "BACK", edgeBps: -400 })], emptyCtx, policy);
+    expect(negativeBack.rejected[0]!.reason).toBe("edge-below-slip-threshold");
+  });
+
   it("rejects a single stake that exceeds the per-market cap", () => {
     const policy = policyWithSlip({ max_stake_units_per_market: 1_000_000 });
     const result = evaluateSlipExecution([candidate({ sizeUnits: 1_000_001 })], emptyCtx, policy);
@@ -54,16 +65,26 @@ describe("evaluateSlipExecution — second, stricter gate for real capital on Sl
     expect(result.rejected[0]!.reason).toBe("stake-exceeds-per-market-cap");
   });
 
+  it("includes unresolved stake already on the same market in the per-market cap", () => {
+    const policy = policyWithSlip({ max_stake_units_per_market: 1_500_000 });
+    const result = evaluateSlipExecution(
+      [candidate({ sizeUnits: 1_000_000 })],
+      { stakedByMarketUnits: { "1X2": 750_000 }, totalStakedUnits: 750_000 },
+      policy,
+    );
+    expect(result.rejected[0]!.reason).toBe("stake-exceeds-per-market-cap");
+  });
+
   it("rejects once the concurrent-market count is already at the cap", () => {
     const policy = policyWithSlip({ max_concurrent_markets: 2 });
-    const result = evaluateSlipExecution([candidate()], { openMarketCount: 2, totalStakedUnits: 0 }, policy);
+    const result = evaluateSlipExecution([candidate()], { stakedByMarketUnits: { "TOTALS@25": 1, "TOTALS@35": 1 }, totalStakedUnits: 2 }, policy);
     expect(result.approved).toHaveLength(0);
     expect(result.rejected[0]!.reason).toBe("max-concurrent-markets");
   });
 
   it("rejects once total exposure would exceed the aggregate cap, even under the per-market cap", () => {
     const policy = policyWithSlip({ max_stake_units_per_market: 5_000_000, max_total_exposure_units: 3_000_000 });
-    const result = evaluateSlipExecution([candidate({ sizeUnits: 1_000_000 })], { openMarketCount: 0, totalStakedUnits: 2_500_000 }, policy);
+    const result = evaluateSlipExecution([candidate({ sizeUnits: 1_000_000 })], { stakedByMarketUnits: {}, totalStakedUnits: 2_500_000 }, policy);
     expect(result.approved).toHaveLength(0);
     expect(result.rejected[0]!.reason).toBe("total-exposure-cap");
   });

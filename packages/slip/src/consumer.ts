@@ -21,12 +21,15 @@ export interface SlipOutcomeView {
   readonly index: number;
   readonly label: string;
   readonly pool: string;
+  /** Exact settlement-mint atomic units; never parse the formatted display amount for risk. */
+  readonly poolAtomic: string;
   readonly probabilityBps: number;
   readonly projectedPayout: string | null;
 }
 
 export interface TissueSlipMarketView {
   readonly address: string;
+  readonly id: string;
   readonly fixtureId: string;
   readonly creator: string;
   readonly settlementMint: string;
@@ -48,6 +51,8 @@ export interface TissueSlipMarketView {
   readonly resolverTip: string;
   readonly distributablePool: string;
   readonly winningOutcome: number | null;
+  /** On-chain commitment to the exact terminal proof instruction, market, resolver, and roots account. */
+  readonly resolutionEvidenceHash: string | null;
   readonly outcomes: readonly SlipOutcomeView[];
 }
 
@@ -70,7 +75,9 @@ export interface PreparedSlipAction {
 
 export interface SlipReader {
   supportsUnifiedMarkets(): Promise<boolean>;
+  marketAddress(creator: Address, id: bigint): Promise<Address>;
   getMarket(market: Address): Promise<MarketSnapshot>;
+  getTicket(ticket: Address): Promise<TicketSnapshot>;
   listMarkets(): Promise<MarketSnapshot[]>;
   listWalletTickets(owner: Address): Promise<TicketSnapshot[]>;
   verifyReference(input: unknown): Promise<{ reference: MarketReferenceV1; market: MarketSnapshot }>;
@@ -93,6 +100,10 @@ export class TissueSlipConsumer {
     return this.client.supportsUnifiedMarkets();
   }
 
+  deriveMarketAddress(creator: string, id: bigint): Promise<string> {
+    return this.client.marketAddress(address(creator), id);
+  }
+
   async listMarkets(filter: { fixtureId?: string; status?: MarketSnapshot["status"]; stake?: string } = {}): Promise<TissueSlipMarketView[]> {
     const snapshots = (await this.client.listMarkets()).filter((market) =>
       (filter.fixtureId === undefined || String(market.expression.fixtureId) === filter.fixtureId)
@@ -102,6 +113,10 @@ export class TissueSlipConsumer {
 
   async inspectMarket(marketAddress: string, stake?: string): Promise<TissueSlipMarketView> {
     return this.view(await this.client.getMarket(address(marketAddress)), stake);
+  }
+
+  async inspectTicket(ticketAddress: string): Promise<TissueSlipTicketView> {
+    return ticketView(await this.client.getTicket(address(ticketAddress)));
   }
 
   async verifyReference(reference: unknown, stake?: string): Promise<{ reference: MarketReferenceV1; market: TissueSlipMarketView }> {
@@ -136,12 +151,12 @@ export class TissueSlipConsumer {
     return { kind: "create", market: prepared.market, instructions: prepared.instructions };
   }
 
-  async prepareBuy(request: Omit<BuyTicketRequest, "market" | "buyer" | "amount"> & { market: string; buyer: string; amount: string }): Promise<PreparedSlipAction> {
+  async prepareBuy(request: Omit<BuyTicketRequest, "market" | "buyer" | "amount"> & { market: string; buyer: string; amountAtomic: bigint }): Promise<PreparedSlipAction> {
     const prepared = await this.client.buyTicket({
       ...request,
       market: address(request.market),
       buyer: address(request.buyer),
-      amount: parseAmount(request.amount),
+      amount: request.amountAtomic,
     });
     return { kind: "buy", ticket: prepared.ticket, instructions: prepared.instructions };
   }
@@ -176,6 +191,7 @@ export class TissueSlipConsumer {
     const calculated = calculateMarket(snapshot.pools, snapshot.feeBps, snapshot.tipBps);
     return {
       address: snapshot.address,
+      id: String(snapshot.id),
       fixtureId: String(snapshot.expression.fixtureId),
       creator: snapshot.creator,
       settlementMint: snapshot.mint,
@@ -197,12 +213,16 @@ export class TissueSlipConsumer {
       resolverTip: formatAmount(calculated.resolverTip),
       distributablePool: formatAmount(calculated.net),
       winningOutcome: snapshot.winningOutcome,
+      resolutionEvidenceHash: snapshot.resolutionEvidenceHash === null
+        ? null
+        : Buffer.from(snapshot.resolutionEvidenceHash).toString("hex"),
       outcomes: calculated.outcomes.map((outcome, index) => {
         const projectedPayout = outcome.projectedPayout(stake);
         return {
           index,
           label: snapshot.outcomeLabels[index]!,
           pool: formatAmount(outcome.pool),
+          poolAtomic: outcome.pool.toString(),
           probabilityBps: outcome.probabilityBps,
           projectedPayout: projectedPayout === null ? null : formatAmount(projectedPayout),
         };

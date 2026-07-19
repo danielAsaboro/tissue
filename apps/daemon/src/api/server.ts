@@ -91,7 +91,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
     const snapshot = desk.snapshot();
     if (url.pathname === "/health") {
       const healthy = snapshot.status !== "error" && snapshot.status !== "halted";
-      json(res, 200, {
+      json(res, healthy ? 200 : 503, {
         alive: true,
         ok: healthy,
         status: snapshot.status,
@@ -141,9 +141,10 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
           "signerPubkey. preMatchCommitment.txSig and each checkpoints[].txSig are real Solana " +
           "transactions carrying an SPL Memo with the committed hash/root — fetch them from any " +
           "public RPC or explorer, independent of this server, to confirm the commitment " +
-          "predates the claims it anchors. Each fixture's slipExecutions[] carries real Slip " +
-          "market/ticket addresses and buyTxSig for decisions that risked real capital on Slip " +
-          "(exec/slipExec.ts) — fetch buyTxSig from any public RPC to confirm it landed.",
+          "predates the claims it anchors. Each fixture's venueExecutions[] identifies the real " +
+          "adapter, venue market/position, and confirmed submission transaction for decisions " +
+          "that risked capital. Slip is the only enabled adapter today; fetch submissionTxSig " +
+          "from any public RPC to confirm it landed.",
         portfolio: snapshot.portfolio,
         fixtures: snapshot.fixtures.map((fixture) => ({
           fixtureId: fixture.fixtureId,
@@ -153,7 +154,7 @@ export function createApiServer(desk: LiveDesk, config: LiveConfig): Server {
           grade: fixture.grade,
           preMatchCommitment: fixture.preMatchCommitment,
           checkpoints: fixture.checkpoints,
-          slipExecutions: fixture.slipExecutions,
+          venueExecutions: fixture.venueExecutions,
           decisions: fixture.decisions.map((d) => ({
             seq: d.seq,
             triggerMsgId: d.triggerMsgId,

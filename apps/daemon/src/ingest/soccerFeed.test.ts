@@ -15,6 +15,10 @@ describe("soccerFeed phase helpers", () => {
     expect(PHASE_START_MINUTE[STATUS.ET2]).toBe(105);
     expect(PHASE_START_MINUTE[STATUS.WPE]).toBe(120);
     expect(PHASE_START_MINUTE[STATUS.PE]).toBe(120);
+    expect(PHASE_START_MINUTE[STATUS.F]).toBe(90);
+    expect(PHASE_START_MINUTE[STATUS.FET]).toBe(120);
+    expect(PHASE_START_MINUTE[STATUS.FPE]).toBe(120);
+    expect(PHASE_START_MINUTE[STATUS.FINALISED]).toBe(90);
   });
 
   it("isExtraTimePhase covers WET/ET1/HTET/ET2 and nothing else", () => {

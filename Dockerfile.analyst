@@ -5,13 +5,17 @@ RUN corepack enable
 WORKDIR /app
 
 FROM base AS build
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json .npmrc ./
 COPY apps/analyst/package.json apps/analyst/package.json
 COPY apps/daemon/package.json apps/daemon/package.json
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY packages/shared/package.json packages/shared/package.json
+COPY packages/slip/package.json packages/slip/package.json
+COPY vendor/slip-sdk-0.2.0-e125368.tgz vendor/slip-sdk-0.2.0-e125368.tgz
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 COPY packages/shared ./packages/shared
+COPY packages/slip ./packages/slip
 COPY apps/analyst ./apps/analyst
 COPY scripts/build-runtime.mjs ./scripts/build-runtime.mjs
 RUN pnpm build:runtime:analyst

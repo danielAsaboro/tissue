@@ -78,25 +78,35 @@ export interface AnchorEvidenceRow {
 }
 
 /**
- * Real execution on Slip (exec/slipExec.ts, risk/gates.ts::evaluateSlipExecution) — TxLINE
- * has no order/execution instructions of its own, so this is where a Tissue trading decision
- * actually lands as a signed, confirmed transaction on a real settlement venue. One row per
- * decision intent that was either approved and executed or rejected by the Slip-specific
- * capital-risk gate, linked back to its decision via decisionSeq.
+ * Venue-neutral durable execution evidence. Slip is the only registered adapter today;
+ * every future adapter must provide the same real signing and lifecycle evidence before it
+ * can appear here. Rows link to their originating decision through decisionSeq.
  */
-export interface SlipExecutionRow {
+export interface VenueExecutionRow {
+  readonly venue: string;
   readonly decisionSeq: number;
   readonly marketKey: { readonly market: string; readonly lineTimes10?: number };
   readonly selection: string;
+  readonly side?: "BACK" | "LAY";
   readonly edgeBps: number;
+  readonly tissueProbBps?: number;
   readonly sizeUnits: number;
   readonly status: "confirmed" | "failed" | "rejected-by-gate";
-  readonly market?: string;
-  readonly ticket?: string;
-  readonly marketCreateTxSig?: string;
-  readonly buyTxSig?: string;
+  readonly venueMarketId?: string;
+  readonly venuePositionId?: string;
+  readonly submissionTxSig?: string;
   readonly submittedAt: number;
   readonly error?: string;
+  readonly lifecycleStatus?: "open" | "resolved" | "claimed" | "voided" | "refunded" | "attention-required";
+  readonly lifecycleUpdatedAt?: number;
+  readonly settlementTxSig?: string;
+  readonly claimTxSig?: string;
+  readonly voidTxSig?: string;
+  readonly refundTxSig?: string;
+  readonly lifecycleError?: string;
+  readonly venueBreakevenProbBps?: number;
+  readonly venueEdgeBps?: number;
+  readonly projectedPayoutAtomic?: string;
 }
 
 /**
@@ -183,7 +193,7 @@ export interface DashboardData {
   getAblationMatrix(): Promise<AblationMatrixSummary>;
   getCommitmentTimeline(): Promise<readonly CommitmentTimelineRow[]>;
   getEquityCurve(): Promise<readonly EquityCurvePoint[]>;
-  getSlipExecutions(): Promise<readonly SlipExecutionRow[]>;
+  getVenueExecutions(): Promise<readonly VenueExecutionRow[]>;
   /** The fixture the dashboard's other data methods implicitly resolve to — needed by the
    *  in-browser verifier (VerifyPanel), which must know which fixture a decision seq
    *  belongs to before it can look it up in the public /record export. */

@@ -1,0 +1,21 @@
+diff --git a/dist/node.js b/dist/node.js
+index 7b56e22..452356a 100644
+--- a/dist/node.js
++++ b/dist/node.js
+@@ -1,12 +1,7 @@
+ 'use strict';
+ 
+ Object.defineProperty(exports, "__esModule", { value: true });
+-let converter;
+-{
+-    try {
+-        converter = require('bindings')('bigint_buffer');
+-    }
+-    catch (e) {
+-        console.warn('bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)');
+-    }
+-}
++// GHSA-3gc7-fjrx-p6mg: the abandoned native converter performs an unsafe copy for
++// oversized inputs. The bounded JavaScript implementation below has identical semantics
++// for Solana's fixed-width integers and cannot cross a native buffer boundary.
++const converter = undefined;

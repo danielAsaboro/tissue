@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: siteUrl,
     siteName: "Tissue",
-    title: "Tissue · an independent price for every live match market",
+    title: "Tissue · independent prices for supported live match markets",
     description:
       "TxLINE scores + odds in. Fair value out. Latency Radar classifies reactions. Halt on unexplained movement. Hash-chained, replayable.",
     images: [
@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Tissue · an independent price for every live match market",
+    title: "Tissue · independent prices for supported live match markets",
     description:
       "TxLINE scores + odds in. Fair value out. Latency Radar classifies reactions. Halt on unexplained movement.",
     images: ["/images/og.jpg"],

@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { loadPolicy, type Policy } from "../config/policy.js";
-import { kellyFraction, fractionalKellyStake } from "./kelly.js";
+import { kellyFraction, fractionalKellyStake, layBackerStakeFromLiability } from "./kelly.js";
 import { reservationQuote, radarSpreadMultiplier } from "./reservation.js";
 import { computeEdges, proposeQuotes, marketMapFromOdds } from "./strategy.js";
 import { evaluateRisk } from "../risk/gates.js";
@@ -59,6 +59,11 @@ describe("kelly", () => {
     expect(s).toBeGreaterThan(0);
     expect(s).toBeLessThanOrEqual(cfg.maxStakeUnits);
     expect(fractionalKellyStake(0.4, 2.0, cfg)).toBe(0);
+  });
+  it("converts lay Kelly liability into exchange backer volume exactly once", () => {
+    expect(layBackerStakeFromLiability(100_000_000, 5_000)).toBe(25_000_000);
+    expect(layBackerStakeFromLiability(100_000_000, 2_000)).toBe(100_000_000);
+    expect(layBackerStakeFromLiability(100, 2_500)).toBe(66);
   });
 });
 
@@ -161,6 +166,7 @@ function intent(id: string, market: "1X2" | "TOTALS", sizeUnits: number, side: "
     marketKey: market === "1X2" ? { market: "1X2" } : { market: "TOTALS", lineTimes10: 25 },
     selection: "HOME", side, priceMilliOdds: milliOdds(2000), sizeUnits: sizeUnits as never,
     filledUnits: 0 as never, status: "Posted", simulated: true, createdMsgId: "m",
+    tissueProbBps: bps(6000), edgeBps: 300,
     createdTs: millis(0),
   };
 }
@@ -183,7 +189,7 @@ describe("risk gates (the only exec authorizer)", () => {
 
   it("rejects proposals breaching per-market exposure cap", () => {
     const exposure = { perMarketUnits: {}, perFixtureUnits: 0, openIntents: 0, realizedPnlUnits: 0, peakEquityUnits: 0, drawdownUnits: 0 };
-    const big = { marketKey: { market: "1X2" as const }, selection: "HOME" as const, side: "BACK" as const, priceMilliOdds: 2000, sizeUnits: policy.risk.exposure_cap_per_market_units + 1, edgeBps: 300, radarClass: undefined, reason: "back-value" };
+    const big = { marketKey: { market: "1X2" as const }, selection: "HOME" as const, side: "BACK" as const, priceMilliOdds: 2000, sizeUnits: policy.risk.exposure_cap_per_market_units + 1, edgeBps: 300, tissueProbBps: 6000, radarClass: undefined, reason: "back-value" };
     const d = evaluateRisk([big], { ...base, exposure }, policy);
     expect(d.approved).toHaveLength(0);
     expect(d.rejected[0]!.reason).toBe("market-exposure-cap");
@@ -204,7 +210,8 @@ describe("exposure tracker", () => {
     t.upsertOpen(intent("a", "1X2", 100_000_000, "BACK"));
     t.onFill(intent("a", "1X2", 100_000_000, "BACK"), 100_000_000);
     expect(t.inventorySnapshot().bySelection["1X2:HOME"]).toBe(100_000_000);
-    expect(t.openIntentCount()).toBe(1);
+    expect(t.openIntentCount()).toBe(0);
+    expect(t.snapshot().perFixtureUnits).toBe(100_000_000); // matched risk remains capped until settlement
     t.onSettle(50_000_000);
     t.onSettle(-80_000_000);
     expect(t.snapshot().drawdownUnits).toBe(80_000_000); // peak 50, now -30 → dd 80

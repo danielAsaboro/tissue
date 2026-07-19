@@ -18,7 +18,7 @@ import type {
   HaltState,
   QuoteTapeRow,
   ReplayControl,
-  SlipExecutionRow,
+  VenueExecutionRow,
   TissueVsMarketSeries,
 } from "../types";
 
@@ -51,19 +51,31 @@ interface ApiCheckpoint {
   readonly error?: string;
 }
 
-interface ApiSlipExecution {
+interface ApiVenueExecution {
+  readonly venue: string;
   readonly decisionSeq: number;
   readonly marketKey: { readonly market: string; readonly lineTimes10?: number };
   readonly selection: string;
+  readonly side?: "BACK" | "LAY";
   readonly edgeBps: number;
+  readonly tissueProbBps?: number;
   readonly sizeUnits: number;
   readonly status: "confirmed" | "failed" | "rejected-by-gate";
-  readonly market?: string;
-  readonly ticket?: string;
-  readonly marketCreateTxSig?: string;
-  readonly buyTxSig?: string;
+  readonly venueMarketId?: string;
+  readonly venuePositionId?: string;
+  readonly submissionTxSig?: string;
   readonly submittedAt: number;
   readonly error?: string;
+  readonly lifecycleStatus?: "open" | "resolved" | "claimed" | "voided" | "refunded" | "attention-required";
+  readonly lifecycleUpdatedAt?: number;
+  readonly settlementTxSig?: string;
+  readonly claimTxSig?: string;
+  readonly voidTxSig?: string;
+  readonly refundTxSig?: string;
+  readonly lifecycleError?: string;
+  readonly venueBreakevenProbBps?: number;
+  readonly venueEdgeBps?: number;
+  readonly projectedPayoutAtomic?: string;
 }
 
 interface ApiFixture {
@@ -77,7 +89,7 @@ interface ApiFixture {
   readonly anchors: readonly AnchorEvidenceRow[];
   readonly preMatchCommitment: ApiPreMatchCommitment | null;
   readonly checkpoints: readonly ApiCheckpoint[];
-  readonly slipExecutions: readonly ApiSlipExecution[];
+  readonly venueExecutions: readonly ApiVenueExecution[];
 }
 
 interface ApiState {
@@ -249,9 +261,9 @@ export class HttpDashboardData implements DashboardData {
     return this.active(state)?.anchors ?? [];
   }
 
-  async getSlipExecutions(): Promise<readonly SlipExecutionRow[]> {
+  async getVenueExecutions(): Promise<readonly VenueExecutionRow[]> {
     const state = await this.state();
-    return this.active(state)?.slipExecutions ?? [];
+    return this.active(state)?.venueExecutions ?? [];
   }
 
   async getCommitmentTimeline(): Promise<readonly CommitmentTimelineRow[]> {

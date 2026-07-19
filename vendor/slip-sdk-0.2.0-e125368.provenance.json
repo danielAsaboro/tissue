@@ -1,0 +1,10 @@
+{
+  "package": "@slip/sdk",
+  "version": "0.2.0",
+  "tarball": "slip-sdk-0.2.0-e125368.tgz",
+  "slipBaseCommit": "e125368b313d9677b55197ba9ebb690bc2e0106c",
+  "slipBaseCommitMessage": "Harden Slip settlement and AI boundaries",
+  "consumerCompatibilityPatchSha256": "4f250e6d7e5f1e04e995a96d28ed937746b6d3e3396b028587ff039ceb43fd11",
+  "sha512": "b2b45877954ca34cb666541bf88ef935240aa6f687c26bd0a5537f7309c619a2097e5ba63609a7aaef9a0a2514388cf92d45ad937904a583d5d35130604ff967",
+  "note": "Built from the clean hardened Slip base commit plus the adjacent Slip workspace's Node ESM compatibility patch. The patch makes Codama-generated relative imports explicit .js or /index.js specifiers, wires the fixer into regeneration/build, and adds an actual Node ESM import gate. Without it the packed SDK failed in Tissue with ERR_UNSUPPORTED_DIR_IMPORT even though Slip's Vite-based tests passed. The patch is retained in ../slip for review and must be committed there before any public package release."
+}

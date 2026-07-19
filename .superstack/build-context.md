@@ -7,31 +7,40 @@
     "services": ["daemon", "dashboard", "read-only analyst"]
   },
   "review": {
-    "security_score": "B",
-    "quality_score": "B",
+    "date": "2026-07-19",
+    "security_score": "A-",
+    "quality_score": "B+",
+    "bounty_code_score": "93/100",
+    "bounty_screening": "FAIL until demo video, public repository, and judge-accessible deployment/API exist",
     "findings": [
       {
-        "severity": "high",
-        "category": "release evidence",
-        "description": "No current credentialed proof transaction, multi-fixture real evaluation, or public deployment URL is present in the clean workspace.",
-        "fix": "Run the documented credentialed capture and transaction-mode validation, retain the signature and unedited evaluator output, deploy the three images with secrets and persistent corpus storage, then replace every pending field in SUBMISSION.md."
+        "severity": "critical",
+        "category": "eligibility",
+        "description": "The absolute demo-video, public-repository, and judge-access requirements are not satisfied by checked evidence.",
+        "fix": "An authorized owner must publish the repository, deploy the application or API, record an at-most-five-minute demo, and replace every pending submission field with tested URLs."
       },
       {
         "severity": "medium",
-        "category": "scalability",
-        "description": "The live desk replays an entire fixture and rewrites its derived ledger/export on every accepted message, producing quadratic CPU and synchronous I/O growth.",
-        "fix": "Introduce a deterministic incremental engine checkpoint with append-only ledger writes; periodically replay from corpus in a background verifier and fail closed on checkpoint divergence."
+        "category": "strategy evidence",
+        "description": "The verified 100-fixture archive produces +225bps weighted CLV on both deterministic calibration and holdout. Holdout Brier beats its opening-market baseline, but calibration Brier trails its baseline; historical evaluation correctly does not fabricate fills or PnL.",
+        "fix": "Tune only on the frozen 61-fixture calibration set, preserve the 39-fixture holdout untouched until policy freeze, and require non-regression across both calibration and holdout before strengthening the edge claim."
+      },
+      {
+        "severity": "high",
+        "category": "public execution evidence",
+        "description": "Slip lifecycle behavior is proven with the real program under local Surfpool, but buyTicket has no atomic minimum-payout guard and Tissue therefore refuses mainnet-beta.",
+        "fix": "Add an atomic venue-level minimum-payout/slippage constraint, then provision a two-sided public market and rerun buy, proof resolution, claim, restart reconciliation, and explorer-link capture."
       }
     ],
     "ready_for_mainnet": false
   },
   "verification": {
-    "tests": "118 passing (104 daemon, 14 analyst)",
-    "lint": "ESLint TypeScript, React hooks, and Next core-web-vitals rules passing",
-    "typecheck": "all packages passing",
-    "production_build": "Next.js build passing",
-    "dependency_audit": "zero known production vulnerabilities at moderate threshold",
-    "replay": "hash chain and deterministic rerun passing",
-    "containers": "compiled/pruned daemon, standalone analyst, and Next standalone artifacts are runtime-verified; final image rebuild is blocked by an unavailable Docker Desktop daemon after its metadata database I/O fault"
+    "unit_integration": "360 passing, 10 explicitly gated/skipped in the latest full run",
+    "browser_e2e": "20 passing in Chromium",
+    "slip_lifecycle": "real pinned Slip program on Surfpool: two-sided pool, exact atomic buy, proof resolution, claim, idempotent retry passing",
+    "dependency_audit": "passes at moderate threshold with GHSA-3gc7-fjrx-p6mg explicitly ignored only after forcing bigint-buffer to its safe JavaScript implementation",
+    "replay": "synthetic replay hash chain/determinism pass; verified historical evaluation covers 100 completed fixtures, 109382 messages, 7192 quotes, and +225bps weighted CLV on both calibration and holdout",
+    "historical_evaluation": "SHA-256-verified authenticated TxLINE archive replayed through local HTTP/SSE and production fetch/normalization boundaries; holdout Brier 0.197298 vs opening baseline 0.220753, calibration Brier 0.174960 vs baseline 0.161049",
+    "containers": "daemon, analyst, and dashboard images build cleanly; non-root/runtime/header/fail-closed container verification passes"
   }
 }

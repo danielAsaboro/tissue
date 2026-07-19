@@ -1,8 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
 import * as anchor from "@coral-xyz/anchor";
-import { Connection, Keypair } from "@solana/web3.js";
+import { ComputeBudgetProgram, Connection, Keypair } from "@solana/web3.js";
 import type { Network, ScoreMessage } from "@tissue/shared";
 import type { AuthCredentials } from "../ingest/txlineAuth.js";
 import { authHeaders } from "../ingest/txlineAuth.js";
@@ -10,14 +7,13 @@ import { STAT_KEY } from "../ingest/soccerFeed.js";
 import { deriveDailyScoresRootPda, PROGRAM_ID } from "./anchor.js";
 import {
   type AnchorEvidence,
+  booleanProgramReturn,
+  anchorErrorDetail,
   type ProofNodeResponse,
   proofNodes,
   toBytes32,
 } from "./anchorLive.js";
-
-const cwdIdlPath = resolve(process.cwd(), "apps/daemon/idls/txoracle.json");
-const IDL_PATH = process.env.TISSUE_IDL_PATH
-  ?? (existsSync(cwdIdlPath) ? cwdIdlPath : fileURLToPath(new URL("../../idls/txoracle.json", import.meta.url)));
+import { loadTxlineIdl } from "./txlineIdl.js";
 
 export interface ScoreAnchorOptions {
   readonly origin: string;
@@ -111,6 +107,68 @@ async function fetchStatProof(
   return (await response.json()) as ScoreStatProofResponse;
 }
 
+export interface SlipResolutionProof {
+  readonly dailyScoresRoots: string;
+  readonly proof: {
+    readonly eventStatRoot: Uint8Array;
+    readonly statA: { readonly stat: ScoreStatProofResponse["statToProve"]; readonly statProof: Array<{ readonly hash: Uint8Array; readonly isRightSibling: boolean }> };
+    readonly statB: { readonly stat: ScoreStatProofResponse["statToProve"]; readonly statProof: Array<{ readonly hash: Uint8Array; readonly isRightSibling: boolean }> };
+    readonly summary: {
+      readonly fixtureId: bigint;
+      readonly updateCount: number;
+      readonly minTimestamp: bigint;
+      readonly maxTimestamp: bigint;
+      readonly eventsSubTreeRoot: Uint8Array;
+    };
+    readonly subTreeProof: Array<{ readonly hash: Uint8Array; readonly isRightSibling: boolean }>;
+    readonly mainTreeProof: Array<{ readonly hash: Uint8Array; readonly isRightSibling: boolean }>;
+  };
+}
+
+/** Build the exact two-stat proof consumed by Slip's terminal soccer rulebooks. This reuses
+ * the same TxLINE proof endpoint and strict fixture/value/period checks as live admission. */
+export async function fetchSlipResolutionProof(
+  message: ScoreMessage,
+  opts: ScoreAnchorOptions,
+): Promise<SlipResolutionProof> {
+  if (!message.isFinal) throw new Error(`fixture ${message.fixtureId} is not final; refusing Slip resolution`);
+  const home = await fetchStatProof(message, STAT_KEY.P1_GOALS, opts);
+  const away = await fetchStatProof(message, STAT_KEY.P2_GOALS, opts);
+  const homeValidated = assertScoreProofMatchesMessage(message, home, STAT_KEY.P1_GOALS, message.homeScore);
+  const awayValidated = assertScoreProofMatchesMessage(message, away, STAT_KEY.P2_GOALS, message.awayScore);
+  if (homeValidated.proofTs !== awayValidated.proofTs || homeValidated.period !== awayValidated.period) {
+    throw new Error("TxLINE final score proofs do not describe the same anchored batch and period");
+  }
+  if (JSON.stringify(home.summary) !== JSON.stringify(away.summary)) {
+    throw new Error("TxLINE final score proofs returned inconsistent batch summaries");
+  }
+  if (JSON.stringify(home.eventStatRoot) !== JSON.stringify(away.eventStatRoot)) {
+    throw new Error("TxLINE final score proofs returned inconsistent event-stat roots");
+  }
+  const roots = deriveDailyScoresRootPda(opts.network, Math.floor(homeValidated.proofTs / 86_400_000));
+  const binaryProofNodes = (nodes: readonly ProofNodeResponse[]) => proofNodes(nodes).map((node) => ({
+    hash: Uint8Array.from(node.hash),
+    isRightSibling: node.isRightSibling,
+  }));
+  return {
+    dailyScoresRoots: roots.pda.toBase58(),
+    proof: {
+      eventStatRoot: Uint8Array.from(toBytes32(home.eventStatRoot)),
+      statA: { stat: home.statToProve, statProof: binaryProofNodes(home.statProof) },
+      statB: { stat: away.statToProve, statProof: binaryProofNodes(away.statProof) },
+      summary: {
+        fixtureId: BigInt(home.summary.fixtureId),
+        updateCount: home.summary.updateStats.updateCount,
+        minTimestamp: BigInt(home.summary.updateStats.minTimestamp),
+        maxTimestamp: BigInt(home.summary.updateStats.maxTimestamp),
+        eventsSubTreeRoot: Uint8Array.from(toBytes32(home.summary.eventStatsSubTreeRoot)),
+      },
+      subTreeProof: binaryProofNodes(home.subTreeProof),
+      mainTreeProof: binaryProofNodes(home.mainTreeProof),
+    },
+  };
+}
+
 function anchorSummary(proof: ScoreStatProofResponse): Record<string, unknown> {
   return {
     fixtureId: new anchor.BN(proof.summary.fixtureId),
@@ -174,13 +232,13 @@ export async function verifyScoreOnChain(
     const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(Keypair.generate()), {
       commitment: "confirmed",
     });
-    const idl = JSON.parse(readFileSync(IDL_PATH, "utf8"));
+    const idl = loadTxlineIdl(opts.network);
     const program = new anchor.Program(idl, provider);
     if (!program.programId.equals(PROGRAM_ID[opts.network])) {
       throw new Error(`IDL program ${program.programId.toBase58()} does not match configured TxLINE program`);
     }
     for (const proof of proofs) {
-      const result = await program.methods
+      const simulation = await program.methods
         .validateStat!(
           new anchor.BN(proofTs),
           anchorSummary(proof),
@@ -192,7 +250,11 @@ export async function verifyScoreOnChain(
           null,
         )
         .accounts({ dailyScoresMerkleRoots: derived.pda })
-        .view();
+        // Deep score trees regularly exceed Solana's 200k default even for a one-stat
+        // proof. This raises the limit, not the fee/consumption; view remains read-only.
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+        .simulate();
+      const result = booleanProgramReturn(simulation.raw ?? [], program.programId.toBase58());
       if (result !== true) {
         return { ...base, rootPda, verifiedAt: Date.now(), status: "rejected", result: false };
       }
@@ -205,7 +267,7 @@ export async function verifyScoreOnChain(
       verifiedAt: Date.now(),
       status: "failed",
       result: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: anchorErrorDetail(error),
     };
   }
 }

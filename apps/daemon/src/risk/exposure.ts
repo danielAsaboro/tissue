@@ -5,6 +5,7 @@ import {
   type MarketKey,
   marketKeyString,
 } from "@tissue/shared";
+import { quoteLiabilityUnits } from "./liability.js";
 
 /**
  * Exposure + inventory accounting (PRD §5). [LANE: Tim]. Stateful but deterministic: it is
@@ -16,6 +17,9 @@ export class ExposureTracker {
   private readonly open = new Map<string, Intent>();
   /** Signed matched inventory per `${marketKey}:${selection}` (+ long via BACK, − via LAY). */
   private readonly inventory = new Map<string, number>();
+  /** Gross unresolved maximum loss already matched, by market. Conservative by design:
+   * opposing positions are not netted without a complete outcome-aware margin model. */
+  private readonly matchedLiabilityByMarket = new Map<string, number>();
   private realizedPnlUnits = 0;
   private peakEquityUnits = 0;
 
@@ -33,28 +37,51 @@ export class ExposureTracker {
 
   onFill(intent: Intent, filledUnits: number): void {
     const key = `${marketKeyString(intent.marketKey)}:${intent.selection}`;
-    const signed = intent.side === "BACK" ? filledUnits : -filledUnits;
+    const liability = quoteLiabilityUnits(intent.side, intent.priceMilliOdds, filledUnits);
+    const signed = intent.side === "BACK" ? liability : -liability;
     this.inventory.set(key, (this.inventory.get(key) ?? 0) + signed);
+    const marketKey = marketKeyString(intent.marketKey);
+    this.matchedLiabilityByMarket.set(
+      marketKey,
+      (this.matchedLiabilityByMarket.get(marketKey) ?? 0) + liability,
+    );
+
+    // Keep the risk view synchronized with the book's fill lifecycle. Previously the
+    // tracker retained the original unfilled intent and then dropped matched positions,
+    // allowing the same capital cap to be reused repeatedly before settlement.
+    const current = this.open.get(intent.id);
+    if (current) {
+      const nextFilled = Math.min(current.sizeUnits, current.filledUnits + filledUnits);
+      if (nextFilled >= current.sizeUnits) this.open.delete(current.id);
+      else this.open.set(current.id, { ...current, filledUnits: nextFilled as never, status: "PartiallyMatched" });
+    }
   }
 
   onSettle(pnlUnits: number): void {
     this.realizedPnlUnits += pnlUnits;
     const equity = this.realizedPnlUnits;
     if (equity > this.peakEquityUnits) this.peakEquityUnits = equity;
+    this.matchedLiabilityByMarket.clear();
+    this.inventory.clear();
   }
 
-  perMarketOpenUnits(marketKey: MarketKey): number {
+  perMarketExposureUnits(marketKey: MarketKey): number {
     const key = marketKeyString(marketKey);
     let sum = 0;
     for (const i of this.open.values()) {
-      if (marketKeyString(i.marketKey) === key) sum += i.sizeUnits;
+      if (marketKeyString(i.marketKey) === key) {
+        sum += quoteLiabilityUnits(i.side, i.priceMilliOdds, i.sizeUnits - i.filledUnits);
+      }
     }
-    return sum;
+    return sum + (this.matchedLiabilityByMarket.get(key) ?? 0);
   }
 
-  perFixtureOpenUnits(): number {
+  perFixtureExposureUnits(): number {
     let sum = 0;
-    for (const i of this.open.values()) sum += i.sizeUnits;
+    for (const i of this.open.values()) {
+      sum += quoteLiabilityUnits(i.side, i.priceMilliOdds, i.sizeUnits - i.filledUnits);
+    }
+    for (const liability of this.matchedLiabilityByMarket.values()) sum += liability;
     return sum;
   }
 
@@ -83,13 +110,17 @@ export class ExposureTracker {
     const perMarketUnits: Record<string, number> = {};
     for (const i of this.open.values()) {
       const k = marketKeyString(i.marketKey);
-      perMarketUnits[k] = (perMarketUnits[k] ?? 0) + i.sizeUnits;
+      perMarketUnits[k] = (perMarketUnits[k] ?? 0)
+        + quoteLiabilityUnits(i.side, i.priceMilliOdds, i.sizeUnits - i.filledUnits);
+    }
+    for (const [k, liability] of this.matchedLiabilityByMarket) {
+      perMarketUnits[k] = (perMarketUnits[k] ?? 0) + liability;
     }
     const equity = this.realizedPnlUnits;
     const drawdown = Math.max(0, this.peakEquityUnits - equity);
     return {
       perMarketUnits,
-      perFixtureUnits: this.perFixtureOpenUnits(),
+      perFixtureUnits: this.perFixtureExposureUnits(),
       openIntents: this.open.size,
       realizedPnlUnits: this.realizedPnlUnits,
       peakEquityUnits: this.peakEquityUnits,

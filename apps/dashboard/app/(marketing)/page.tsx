@@ -22,7 +22,7 @@ const FEATURES = [
   {
     icon: Radar,
     title: "Latency Radar",
-    body: "Every market reaction is classified against that price: late, fast, overreacting, stale, or unexplained.",
+    body: "Each supported-market reaction is classified against that price: late, fast, overreacting, stale, or unexplained.",
   },
   {
     icon: OctagonX,
@@ -60,12 +60,15 @@ export default function LandingPage() {
             <h1 className="lp-display lp-display-left lp-display-ink">
               An independent price
               <br />
-              for every live market.
+              for supported live markets.
             </h1>
             <p className="lp-lede lp-lede-left lp-lede-ink">
               Odds move the instant the ball does. Tissue builds its own fair value from verified
               match state, quotes when the market disagrees, and halts when a move has no cause it
               can see.
+            </p>
+            <p className="lp-lede lp-lede-left lp-lede-ink">
+              Current pricing coverage is 1X2 and totals. Slip is the only enabled execution venue.
             </p>
             <div className="lp-cta-row lp-cta-left">
               <Link href="/overview" className="lp-btn lp-btn-primary">

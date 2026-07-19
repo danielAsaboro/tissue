@@ -26,6 +26,16 @@ function score(o: Partial<ScoreMessage>): ScoreMessage {
 }
 
 describe("MatchState phase/stoppage derivation", () => {
+  it("latches terminal state across the trailing disconnected delivery", () => {
+    const st = new MatchState(policy);
+    st.applyScore(score({ minute: 98, phase: String(STATUS.H2), homeScore: 2, awayScore: 1 }));
+    st.applyScore(score({ minute: 90, phase: String(STATUS.FINALISED), homeScore: 2, awayScore: 1, isFinal: true }));
+    st.applyScore(score({ msgId: "disconnect", minute: 0, phase: "0", homeScore: 2, awayScore: 1, isFinal: false }));
+    expect(st.isFinal).toBe(true);
+    expect(st.minute).toBe(98);
+    expect(st.tissueState().minute).toBe(98);
+  });
+
   it("regular time before minute 90 is regulation, not stoppage", () => {
     const st = new MatchState(policy);
     st.applyScore(score({ minute: 60, phase: String(STATUS.H2) }));

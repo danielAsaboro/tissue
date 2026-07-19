@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AnalystExport, DecisionRecord, FeedMessage } from "@tissue/shared";
+import { marketKeyString, type AnalystExport, type DecisionRecord, type FeedMessage } from "@tissue/shared";
 import { loadTissueSlipConfig, type TissueSlipConfig } from "@tissue/slip";
 import { loadPolicy, type Policy } from "../config/policy.js";
 import { appendToCorpus, CORPUS_DIR, readCorpus } from "../ingest/corpus.js";
@@ -15,8 +15,8 @@ import { verifyOddsOnChain, type AnchorEvidence } from "../exec/anchorLive.js";
 import { verifyScoreOnChain } from "../exec/scoreAnchorLive.js";
 import { submitPreMatchCommitment, type PreMatchCommitmentEvidence } from "../exec/preMatchCommit.js";
 import { isCheckpointDue, prepareCheckpointAnchor, submitCheckpointAnchor, type CheckpointAnchorEvidence } from "../exec/periodicAnchor.js";
-import { executeSlipBuy, type SlipExecutionEvidence } from "../exec/slipExec.js";
-import { evaluateSlipExecution, type SlipTradeCandidate } from "../risk/gates.js";
+import { SlipVenueAdapter } from "../exec/slipVenue.js";
+import { executeThroughVenue, failedVenueEvidence, type VenueAdapter, type VenueExecutionEvidence, type VenueTradeCandidate } from "../exec/venue.js";
 import { loadLedgerSigner, type LedgerSigner } from "../ledger/signing.js";
 import { recordPolicySnapshot } from "../config/policySnapshot.js";
 import { DEFAULT_LATENCY_BUCKETS_MS, LatencyHistogram } from "./latencyHistogram.js";
@@ -95,6 +95,8 @@ export class LiveDesk {
   private activeFixtureId: string | null = null;
   /** Portfolio-level kill latch ACROSS every fixture — see enforcePortfolioRisk(). */
   private portfolioKilled = false;
+  /** A max-gap breach is process-lifetime: reconnect telemetry cannot silently re-enable risk. */
+  private feedGapKilled = false;
   /** Aggregate proof-failure-rate circuit breaker — see recordProofOutcome(). Distinct from
    *  per-message admission failure (proofErrors): this catches a systemically degraded proof
    *  service, not one bad message. Operator-restart-only, like every other kill latch here. */
@@ -114,13 +116,13 @@ export class LiveDesk {
   private readonly lastCheckpointSeq = new Map<string, number>();
   private readonly pendingCheckpointFixtureIds = new Set<string>();
   private checkpointQueue: Promise<void> = Promise.resolve();
-  /** Real capital execution on Slip — see exec/slipExec.ts and risk/gates.ts::evaluateSlipExecution.
-   *  Null (not just disabled) when TISSUE_SLIP_* env vars are unset — Slip is opt-in for Tissue,
-   *  same discipline as the analyst's Slip integration (packages/slip/src/config.ts). */
-  private readonly slipConfig: TissueSlipConfig | null = loadTissueSlipConfig();
-  private readonly slipExecutions = new Map<string, SlipExecutionEvidence[]>();
-  private readonly lastSlipSeq = new Map<string, number>();
-  private slipQueue: Promise<void> = Promise.resolve();
+  /** Only adapters with a complete real boundary are registered. Slip is currently the sole
+   * adapter; future venue names do not appear here until discovery through reconciliation works. */
+  private readonly venueAdapters: readonly VenueAdapter[];
+  private readonly venueExecutions = new Map<string, VenueExecutionEvidence[]>();
+  private readonly lastVenueSeq = new Map<string, number>();
+  private venueQueue: Promise<void> = Promise.resolve();
+  private venueLifecycleTimer: ReturnType<typeof setInterval> | undefined;
   private readonly pendingAnchorIds = new Set<string>();
   private readonly proofErrors = new Map<string, string>();
   private readonly securityCounters = {
@@ -133,7 +135,8 @@ export class LiveDesk {
    *  durable append) — the two numbers that actually decide whether the desk keeps up. */
   private readonly proofVerificationLatencyMs = new LatencyHistogram(DEFAULT_LATENCY_BUCKETS_MS);
   private readonly decisionLoopLatencyMs = new LatencyHistogram(DEFAULT_LATENCY_BUCKETS_MS);
-  private anchorQueue: Promise<void> = Promise.resolve();
+  /** Ordered per fixture, concurrent across fixtures to avoid global proof head-of-line blocking. */
+  private readonly anchorQueues = new Map<string, Promise<void>>();
   private commitQueue: Promise<void> = Promise.resolve();
   private readonly pendingCommitmentIds = new Set<string>();
   private readonly streams: Record<StreamKind, StreamState> = {
@@ -160,6 +163,27 @@ export class LiveDesk {
     this.credentials = credentials;
     this.policy = policy;
     this.signer = loadLedgerSigner(config.keypairPath);
+    const slipConfig: TissueSlipConfig | null = loadTissueSlipConfig();
+    this.venueAdapters = slipConfig && policy.exec.slip.enabled
+      ? [new SlipVenueAdapter({
+        rpcUrl: slipConfig.rpcUrl,
+        keypairPath: config.keypairPath,
+        slipConfig,
+        minVenueEdgeBps: policy.exec.slip.min_venue_edge_bps,
+        policy,
+        lifecycleOptions: () => ({
+          rpcUrl: slipConfig.rpcUrl,
+          keypairPath: config.keypairPath,
+          slipConfig,
+          scoreProof: {
+            origin: config.origin,
+            rpcUrl: config.rpcUrl,
+            network: config.network,
+            credentials: this.credentials,
+          },
+        }),
+      })]
+      : [];
   }
 
   subscribe(listener: Listener): () => void {
@@ -172,7 +196,14 @@ export class LiveDesk {
     this.loadAnchorEvidence();
     this.loadPreMatchCommitments();
     this.loadCheckpoints();
-    this.loadSlipExecutions();
+    this.loadVenueExecutions();
+    if (this.venueAdapters.length > 0) {
+      this.reconcileVenueLifecycles();
+      this.venueLifecycleTimer = setInterval(
+        () => this.reconcileVenueLifecycles(),
+        this.policy.exec.slip.reconcile_interval_ms,
+      );
+    }
     if (this.signer) {
       void this.checkWalletBalance();
       this.walletBalanceTimer = setInterval(
@@ -204,6 +235,7 @@ export class LiveDesk {
 
   async stop(): Promise<void> {
     if (this.walletBalanceTimer) clearInterval(this.walletBalanceTimer);
+    if (this.venueLifecycleTimer) clearInterval(this.venueLifecycleTimer);
     for (const client of this.clients) client.stop();
     await Promise.all(this.clientLoops);
   }
@@ -255,7 +287,7 @@ export class LiveDesk {
       : undefined;
     const status = this.error
       ? "error"
-      : this.portfolioKilled || anyGap
+      : this.portfolioKilled || this.feedGapKilled || anyGap
         ? "halted"
         : this.pendingAnchorIds.size > 0
           ? "verifying"
@@ -357,7 +389,7 @@ export class LiveDesk {
       this.enforcePortfolioRisk();
       this.maybeSubmitPreMatchCommitment(message.fixtureId, result);
       this.maybeSubmitCheckpointAnchor(message.fixtureId, result);
-      this.maybeExecuteSlip(message.fixtureId, record);
+      this.maybeExecuteVenues(message.fixtureId, record);
     } catch (error) {
       // The session mutates before durable writes. Discard every derived in-memory view so a
       // subsequent attempt must rebuild from the authoritative on-disk corpus and ledger.
@@ -407,7 +439,7 @@ export class LiveDesk {
       this.activeFixtureId ??= fixtureId;
     }
     // A newly discovered fixture must not sneak past an already-tripped portfolio kill.
-    if (this.portfolioKilled) session.kill();
+    if (this.portfolioKilled || this.feedGapKilled || this.proofCircuitKilled) session.kill();
     this.sessions.set(fixtureId, session);
     this.tapes.set(fixtureId, tape);
     this.messageIds.set(fixtureId, messageIds);
@@ -466,6 +498,11 @@ export class LiveDesk {
       gapMs,
       lastActivityAt: this.streams[stream].lastActivityAt,
     };
+    if (gapMs >= this.policy.feed.max_gap_ms && !this.feedGapKilled) {
+      this.feedGapKilled = true;
+      for (const session of this.sessions.values()) session.kill();
+      console.error(JSON.stringify({ event: "tissue.feed_gap_kill", stream, gapMs, thresholdMs: this.policy.feed.max_gap_ms }));
+    }
     this.publish();
   }
 
@@ -516,14 +553,24 @@ export class LiveDesk {
       samples: this.recentProofOutcomes.length,
       rate,
     }));
+    for (const session of this.sessions.values()) session.kill();
     this.refreshError();
   }
 
   private queueVerification(stream: StreamKind, message: FeedMessage): void {
     if (this.pendingAnchorIds.has(message.msgId)) return;
+    if (this.pendingAnchorIds.size >= 1_024) {
+      this.proofCircuitKilled = true;
+      this.proofCircuitReason = "source-proof queue exceeded 1024 pending messages — halted, operator restart required";
+      for (const session of this.sessions.values()) session.kill();
+      this.refreshError();
+      this.publish();
+      return;
+    }
     this.pendingAnchorIds.add(message.msgId);
     const receivedAt = Date.now();
-    this.anchorQueue = this.anchorQueue.catch(() => undefined).then(async () => {
+    const prior = this.anchorQueues.get(message.fixtureId) ?? Promise.resolve();
+    const queued = prior.catch(() => undefined).then(async () => {
       const verifyStart = Date.now();
       const evidence = await this.verifySource(message, false);
       this.proofVerificationLatencyMs.observe(Date.now() - verifyStart);
@@ -533,6 +580,7 @@ export class LiveDesk {
       if (evidence.result) {
         this.proofErrors.delete(message.msgId);
         this.recordProofOutcome(true);
+        if (this.proofCircuitKilled || this.feedGapKilled) return;
         await this.commitMessage(stream, admittedSourceMessage(message));
         this.decisionLoopLatencyMs.observe(Date.now() - receivedAt);
         return;
@@ -562,6 +610,11 @@ export class LiveDesk {
       this.updatedAt = Date.now();
       this.publish();
     });
+    this.anchorQueues.set(message.fixtureId, queued);
+    void queued.then(
+      () => { if (this.anchorQueues.get(message.fixtureId) === queued) this.anchorQueues.delete(message.fixtureId); },
+      () => { if (this.anchorQueues.get(message.fixtureId) === queued) this.anchorQueues.delete(message.fixtureId); },
+    );
   }
 
   private verifySource(message: FeedMessage, recovery: boolean): Promise<AnchorEvidence> {
@@ -735,93 +788,174 @@ export class LiveDesk {
     });
   }
 
-  private loadSlipExecutions(): void {
-    const path = join(CORPUS_DIR, "slip-executions.jsonl");
-    if (!existsSync(path)) return;
-    for (const line of readFileSync(path, "utf8").split("\n")) {
-      if (!line.trim()) continue;
-      const evidence = JSON.parse(line) as SlipExecutionEvidence;
-      const existing = this.slipExecutions.get(evidence.fixtureId) ?? [];
-      existing.push(evidence);
-      this.slipExecutions.set(evidence.fixtureId, existing);
+  private loadVenueExecutions(): void {
+    // Read the retired Slip-specific journal once for migration, then let the generic journal
+    // win by execution identity. Raw evidence is never rewritten or deleted.
+    for (const filename of ["slip-executions.jsonl", "venue-executions.jsonl"]) {
+      const path = join(CORPUS_DIR, filename);
+      if (!existsSync(path)) continue;
+      for (const line of readFileSync(path, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        const parsed = JSON.parse(line) as VenueExecutionEvidence & {
+          market?: string;
+          ticket?: string;
+          buyTxSig?: string;
+          resolveTxSig?: string;
+        };
+        const evidence: VenueExecutionEvidence = {
+          ...parsed,
+          venue: parsed.venue ?? "slip",
+          ...((parsed.venueMarketId ?? parsed.market) ? { venueMarketId: parsed.venueMarketId ?? parsed.market } : {}),
+          ...((parsed.venuePositionId ?? parsed.ticket) ? { venuePositionId: parsed.venuePositionId ?? parsed.ticket } : {}),
+          ...((parsed.submissionTxSig ?? parsed.buyTxSig) ? { submissionTxSig: parsed.submissionTxSig ?? parsed.buyTxSig } : {}),
+          ...((parsed.settlementTxSig ?? parsed.resolveTxSig) ? { settlementTxSig: parsed.settlementTxSig ?? parsed.resolveTxSig } : {}),
+        };
+        this.upsertVenueExecution(evidence);
+      }
     }
   }
 
-  private persistSlipExecution(evidence: SlipExecutionEvidence): void {
+  private persistVenueExecution(evidence: VenueExecutionEvidence): void {
     mkdirSync(CORPUS_DIR, { recursive: true });
-    appendFileSync(join(CORPUS_DIR, "slip-executions.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
+    appendFileSync(join(CORPUS_DIR, "venue-executions.jsonl"), `${JSON.stringify(evidence)}\n`, "utf8");
   }
 
-  /**
-   * Second, stricter authorization on top of the existing quote-publication risk gate
-   * (risk/gates.ts::evaluateRisk, already applied inside the engine before this record ever
-   * existed) — evaluateSlipExecution decides which of THIS decision's already-approved
-   * Intents are also cleared to risk real capital on Slip. Fires at most once per decision
-   * seq, queued through its own lane (same keypair/blockhash reasoning as the anchoring and
-   * checkpoint queues above) so concurrent fixtures never race the same nonce.
-   */
-  private maybeExecuteSlip(fixtureId: string, record: DecisionRecord): void {
-    if (!this.slipConfig || !this.policy.exec.slip.enabled) return;
-    if (record.action !== "POST" || record.intents.length === 0) return;
-    if ((this.lastSlipSeq.get(fixtureId) ?? -1) >= record.seq) return;
-    this.lastSlipSeq.set(fixtureId, record.seq);
+  private upsertVenueExecution(evidence: VenueExecutionEvidence): void {
+    const existing = this.venueExecutions.get(evidence.fixtureId) ?? [];
+    const index = existing.findIndex((row) =>
+      row.venue === evidence.venue
+      && row.decisionSeq === evidence.decisionSeq
+      && row.selection === evidence.selection
+      && row.marketKey.market === evidence.marketKey.market
+      && row.marketKey.lineTimes10 === evidence.marketKey.lineTimes10,
+    );
+    if (index >= 0) existing[index] = evidence;
+    else existing.push(evidence);
+    this.venueExecutions.set(evidence.fixtureId, existing);
+  }
 
-    const candidates: SlipTradeCandidate[] = record.intents.map((intent) => ({
-      marketKey: intent.marketKey,
-      selection: intent.selection,
-      sizeUnits: intent.sizeUnits,
-      edgeBps: record.edgeBps,
-    }));
-    const openForFixture = this.slipExecutions.get(fixtureId) ?? [];
-    const confirmed = openForFixture.filter((e) => e.status === "confirmed");
-    const ctx = {
-      openMarketCount: new Set(confirmed.map((e) => `${e.marketKey.market}@${e.marketKey.lineTimes10 ?? ""}`)).size,
-      totalStakedUnits: confirmed.reduce((sum, e) => sum + e.sizeUnits, 0),
-    };
-    const decision = evaluateSlipExecution(candidates, ctx, this.policy);
-    for (const { candidate, reason } of decision.rejected) {
-      const evidence: SlipExecutionEvidence = {
-        fixtureId,
-        decisionSeq: record.seq,
-        marketKey: candidate.marketKey,
-        selection: candidate.selection,
-        edgeBps: candidate.edgeBps,
-        sizeUnits: candidate.sizeUnits,
-        outcomeIndex: -1,
-        stakeAmount: "0",
-        status: "rejected-by-gate",
-        submittedAt: Date.now(),
-        error: reason,
-      };
-      const existing = this.slipExecutions.get(fixtureId) ?? [];
-      existing.push(evidence);
-      this.slipExecutions.set(fixtureId, existing);
-      this.persistSlipExecution(evidence);
-    }
-    if (decision.approved.length === 0) return;
-
-    const slipConfig = this.slipConfig;
-    this.slipQueue = this.slipQueue.catch(() => undefined).then(async () => {
-      for (const [index, candidate] of decision.approved.entries()) {
-        // Ticket PDA = [market, buyer, nonce] — offset by index so two approved candidates
-        // from the same decision can never collide even when they target the same market.
-        const nonce = BigInt(record.seq) * 1000n + BigInt(index);
-        const evidence = await executeSlipBuy(candidate, fixtureId, record.seq, nonce, {
-          rpcUrl: slipConfig.rpcUrl,
-          keypairPath: this.config.keypairPath,
-          slipConfig,
-        });
-        const existing = this.slipExecutions.get(fixtureId) ?? [];
-        existing.push(evidence);
-        this.slipExecutions.set(fixtureId, existing);
-        this.persistSlipExecution(evidence);
-        if (evidence.status === "failed") {
-          console.error(JSON.stringify({ event: "tissue.slip_execution_failed", fixtureId, seq: record.seq, error: evidence.error }));
+  /** Resume each real adapter lifecycle from canonical venue state. The journal is append-only;
+   * loadVenueExecutions() folds updates by stable venue + decision identity on restart. */
+  private reconcileVenueLifecycles(): void {
+    if (this.venueAdapters.length === 0) return;
+    this.venueQueue = this.venueQueue.catch(() => undefined).then(async () => {
+      for (const [fixtureId, executions] of this.venueExecutions) {
+        let terminal: Extract<FeedMessage, { kind: "score" }> | undefined;
+        try {
+          terminal = readCorpus(fixtureId)
+            .filter((message): message is Extract<FeedMessage, { kind: "score" }> => message.kind === "score")
+            .filter((message) => message.isFinal || message.isVoid)
+            .at(-1);
+        } catch {
+          // A confirmed ticket can still be claimed/refunded from canonical Slip state even if
+          // its local TxLINE corpus is temporarily unavailable; resolution itself will wait.
+        }
+        for (const evidence of [...executions]) {
+          if (evidence.status !== "confirmed") continue;
+          if (evidence.lifecycleStatus === "claimed" || evidence.lifecycleStatus === "refunded") continue;
+          const adapter = this.venueAdapters.find((candidate) => candidate.id === evidence.venue);
+          if (!adapter) continue;
+          const updated = await adapter.reconcile(evidence, terminal);
+          if (JSON.stringify(updated) !== JSON.stringify(evidence)) {
+            this.upsertVenueExecution(updated);
+            this.persistVenueExecution(updated);
+            if (updated.lifecycleStatus === "attention-required") {
+              console.error(JSON.stringify({
+                event: "tissue.venue_lifecycle_attention_required",
+                venue: evidence.venue,
+                fixtureId,
+                decisionSeq: evidence.decisionSeq,
+                detail: updated.lifecycleError,
+              }));
+            }
+          }
         }
       }
       this.updatedAt = Date.now();
       this.publish();
     });
+  }
+
+  /**
+   * Second, stricter authorization on top of the existing quote-publication risk gate
+   * (risk/gates.ts::evaluateRisk, already applied inside the engine before this record ever
+   * existed). Each registered adapter applies its own capital policy, discovery, liquidity,
+   * fee, and fair-value checks before it may sign. The shared lane prevents one fee payer
+   * from racing nonces/blockhash work across concurrent fixtures.
+   */
+  private maybeExecuteVenues(fixtureId: string, record: DecisionRecord): void {
+    if (this.venueAdapters.length === 0) return;
+    if (record.action !== "POST" || record.intents.length === 0) return;
+    const candidates: VenueTradeCandidate[] = record.intents.map((intent) => ({
+      marketKey: intent.marketKey,
+      selection: intent.selection,
+      side: intent.side,
+      sizeUnits: intent.sizeUnits,
+      edgeBps: intent.edgeBps,
+      tissueProbBps: intent.tissueProbBps,
+    }));
+    for (const adapter of this.venueAdapters) {
+      const sequenceKey = `${adapter.id}:${fixtureId}`;
+      if ((this.lastVenueSeq.get(sequenceKey) ?? -1) >= record.seq) continue;
+      this.lastVenueSeq.set(sequenceKey, record.seq);
+      const openForVenue = (this.venueExecutions.get(fixtureId) ?? []).filter((evidence) => evidence.venue === adapter.id);
+      const confirmed = openForVenue.filter((evidence) =>
+        evidence.status === "confirmed" && evidence.lifecycleStatus !== "claimed" && evidence.lifecycleStatus !== "refunded",
+      );
+      const exposure = {
+        stakedByMarketUnits: confirmed.reduce<Record<string, number>>((byMarket, evidence) => {
+          const key = marketKeyString(evidence.marketKey);
+          byMarket[key] = (byMarket[key] ?? 0) + evidence.sizeUnits;
+          return byMarket;
+        }, {}),
+        totalStakedUnits: confirmed.reduce((sum, evidence) => sum + evidence.sizeUnits, 0),
+      };
+      const decision = adapter.authorize(candidates, exposure);
+      for (const { candidate, reason } of decision.rejected) {
+        const evidence: VenueExecutionEvidence = {
+          venue: adapter.id,
+          fixtureId,
+          decisionSeq: record.seq,
+          marketKey: candidate.marketKey,
+          selection: candidate.selection,
+          side: candidate.side,
+          edgeBps: candidate.edgeBps,
+          tissueProbBps: candidate.tissueProbBps,
+          sizeUnits: candidate.sizeUnits,
+          outcomeIndex: -1,
+          stakeAmount: "0",
+          status: "rejected-by-gate",
+          submittedAt: Date.now(),
+          error: reason,
+        };
+        this.upsertVenueExecution(evidence);
+        this.persistVenueExecution(evidence);
+      }
+      if (decision.approved.length === 0) continue;
+      this.venueQueue = this.venueQueue.catch(() => undefined).then(async () => {
+        for (const [index, candidate] of decision.approved.entries()) {
+          const request = {
+            fixtureId,
+            decisionSeq: record.seq,
+            nonce: BigInt(record.seq) * 1000n + BigInt(index),
+            candidate,
+          };
+          let evidence: VenueExecutionEvidence;
+          try {
+            evidence = await executeThroughVenue(adapter, request);
+          } catch (error) {
+            evidence = failedVenueEvidence(adapter.id, request, error instanceof Error ? error.message : String(error));
+          }
+          this.upsertVenueExecution(evidence);
+          this.persistVenueExecution(evidence);
+          if (evidence.status === "failed") {
+            console.error(JSON.stringify({ event: "tissue.venue_execution_failed", venue: adapter.id, fixtureId, seq: record.seq, error: evidence.error }));
+          }
+        }
+        this.updatedAt = Date.now();
+        this.publish();
+      });
+    }
   }
 
   private fixtureSnapshot(fixtureId: string, result: EngineResult): FixtureSnapshot {
@@ -846,7 +980,7 @@ export class LiveDesk {
       finalScore: result.finalScore,
       preMatchCommitment: this.preMatchCommitments.get(fixtureId) ?? null,
       checkpoints: this.checkpoints.get(fixtureId) ?? [],
-      slipExecutions: (this.slipExecutions.get(fixtureId) ?? []).slice(-200),
+      venueExecutions: (this.venueExecutions.get(fixtureId) ?? []).slice(-200),
     };
   }
 

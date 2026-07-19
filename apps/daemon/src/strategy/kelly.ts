@@ -29,3 +29,19 @@ export function fractionalKellyStake(pTrue: number, decimalOdds: number, cfg: Ke
   if (raw < cfg.minStakeUnits) return 0;
   return Math.min(raw, cfg.maxStakeUnits);
 }
+
+/** Kelly for laying is calculated as a BACK bet on the complementary outcome, so its
+ * result is maximum liability. Exchange quote volume is instead expressed as the opposing
+ * backer's stake. Convert explicitly to prevent multiplying the intended risk by odds−1 a
+ * second time during settlement. */
+export function layBackerStakeFromLiability(liabilityUnits: number, layMilliOdds: number): number {
+  if (
+    !Number.isSafeInteger(liabilityUnits)
+    || liabilityUnits <= 0
+    || !Number.isSafeInteger(layMilliOdds)
+    || layMilliOdds <= 1_000
+  ) return 0;
+  const stake = (BigInt(liabilityUnits) * 1_000n) / BigInt(layMilliOdds - 1_000);
+  if (stake <= 0n || stake > BigInt(Number.MAX_SAFE_INTEGER)) return 0;
+  return Number(stake);
+}

@@ -1,5 +1,11 @@
 # TISSUE — TxODDS Trading Tools and Agents submission
 
+**FullTime creates the conversation. Slip turns it into an agreement. Tissue finds the fair price and trades it across supported markets.**
+
+Supported currently means Tissue's implemented 1X2 and totals families. Slip is the only
+enabled venue adapter. Polymarket and other order books describe the future venue-agnostic
+architecture, not completed integrations or available product controls.
+
 ## One line
 
 Tissue is an autonomous in-play fair-value and quote-policy service that turns live TxLINE
@@ -35,8 +41,9 @@ Then open `http://localhost:3000` and inspect `http://localhost:8788/state`.
 
 ## Strategy
 
-1. Freeze base scoring intensities from the opening de-vigged market. The free totals-only
-   bundle uses a neutral team split; 1X2, when present, solves the relative scoring share.
+1. Accumulate the latest pre-match 1X2 and totals observations independent of stream arrival
+   order, then freeze base scoring intensities when play begins. The free totals-only bundle
+   uses a neutral team split; 1X2, when present, solves the relative scoring share.
 2. Reprice the remaining match with Poisson goals, Dixon-Coles low-score dependence, verified
    current score, remaining time, and red cards. The bounded/decaying pressure heuristic remains
    replay research only; live pressure is neutralized until TxLINE exposes a proof that binds it.
@@ -65,8 +72,9 @@ Then open `http://localhost:3000` and inspect `http://localhost:8788/state`.
   state) compresses spread as it sits unchallenged — adapted from an idea that originally
   assumed an external on-chain intent-book, which the sponsor's devnet program does not have
   (D-001).
-- **Pre-Match Hash Commitment ("Proof of Edge")**: the desk's first priced-markets snapshot,
-  before any score message, is hashed and anchored via a real SPL Memo transaction — see
+- **Pre-Match Hash Commitment ("Proof of Edge")**: the desk's complete pre-match opening
+  (latest eligible 1X2 and totals marks, frozen when play begins), before any score message,
+  is hashed and anchored via a real SPL Memo transaction — see
   Judge access above for the confirmed devnet signature.
 
 ### Strategy Arena (sponsor's "Agent vs Agent Arena" idea)
@@ -125,74 +133,26 @@ On-chain program IDs:
 
 ## Evaluation
 
-`pnpm run evaluate:real` accepts only real TxLINE corpora — it hard-fails on a clean checkout
-with no real data (never falls back to synthetic). Currently 2 real fixtures are captured
-(one devnet, `18209181`; one mainnet, `17588302`). Unedited output, `pnpm run evaluate:real`:
+`pnpm evaluate:fixtures -- --all` consumes the immutable authenticated TxLINE archive under
+`../resources/fixtures/world-cup-2026`. Before serving a response, the local replay service
+checks its raw byte length and SHA-256 against adjacent provenance, then sends the captured
+JSON/SSE through the production fetchers and normalizers. This is historical replay captured
+July 14—not a claim of current-live service availability.
 
-```json
-{
-  "generatedAt": "2026-07-18T04:21:26.792Z",
-  "source": "real-txline-corpora-only",
-  "fixtures": [
-    {
-      "fixtureId": "17588302",
-      "messages": 72,
-      "decisions": 72,
-      "quotes": 14,
-      "clvN": 14,
-      "meanClvBps": -216,
-      "brier": 0.28045374080645147,
-      "marketBaselineBrier": null,
-      "withoutPressureMeanClvBps": -216,
-      "hashChainHead": "cab4435dd40906ecfc51cbabc17b221aa11107cf079bb6cf2d5ff3feffa394eb"
-    },
-    {
-      "fixtureId": "18209181",
-      "messages": 83,
-      "decisions": 83,
-      "quotes": 24,
-      "clvN": 24,
-      "meanClvBps": 453,
-      "brier": 0.2126982911594204,
-      "marketBaselineBrier": null,
-      "withoutPressureMeanClvBps": 453,
-      "hashChainHead": "5d0c0f7157be555f2ead99fc53e955c0e7fb2b28e7eee24d0af0764e92b8c3a8"
-    }
-  ],
-  "aggregate": {
-    "fixtures": 2,
-    "messages": 155,
-    "quotes": 38,
-    "clvN": 38,
-    "weightedMeanClvBps": 207,
-    "meanTissueBrier": null,
-    "meanMarketBaselineBrier": null
-  }
-}
-```
+The deterministic sha256-bucket split contains 61 calibration fixtures and 39 untouched
+holdout fixtures:
 
-Calibration/holdout split tooling (`pnpm --filter @tissue/daemon evaluate:calibration`,
-`apps/daemon/src/evaluation/calibrationSplit.ts` — deterministic sha256-bucketed split, never
-insertion order) now exists in code, closing what was previously a documented-but-unimplemented
-gap. Unedited output against the same 2 real fixtures:
+| Side | Messages | Quotes | Weighted CLV | Tissue Brier | Opening baseline Brier |
+|---|---:|---:|---:|---:|---:|
+| Calibration | 67,017 | 4,511 | +225bps | 0.174960 | 0.161049 |
+| Holdout | 42,365 | 2,681 | +225bps | 0.197298 | 0.220753 |
 
-```json
-{
-  "generatedAt": "2026-07-18T04:21:35.611Z",
-  "source": "real-txline-corpora-only",
-  "holdoutFraction": 0.3,
-  "calibration": { "fixtureIds": ["18209181"], "fixtures": 1, "clvN": 24, "weightedMeanClvBps": 453, "meanBrier": 0.2126982911594204 },
-  "holdout": { "fixtureIds": ["17588302"], "fixtures": 1, "clvN": 14, "weightedMeanClvBps": -216, "meanBrier": 0.28045374080645147 },
-  "underpowered": true
-}
-```
-
-**Honest reading:** with only 2 real fixtures the split is `underpowered: true` by the tool's
-own threshold (fewer than 3 fixtures per side) — this is a working tool with an honest
-insufficient-sample flag, not a validated calibration result. No policy tuning has been done
-against these numbers. More real captures are needed before any calibration/holdout
-conclusion is trustworthy; the mean-CLV sign flip between the two single-fixture "sides"
-above is exactly the kind of noise the underpowered flag exists to catch.
+The complete unedited per-fixture report is
+`.superstack/world-cup-evaluation.json`. Honest reading: CLV is positive and identical on
+both sides; holdout Brier improves on the opening baseline, while calibration Brier regresses.
+The project therefore claims reproducible positive CLV evidence, not universal calibration
+superiority or historical PnL. Evaluation disables simulated fills rather than inventing a
+counterparty.
 
 ## TxLINE feedback
 
@@ -230,11 +190,28 @@ limiting.
 - **Real order execution, on Slip.** The sponsor's own devnet program has no order or
   execution instruction of any kind (`GROUND-TRUTH.md` T1), so real execution was never
   going to happen against TxLINE itself. `exec/slipExec.ts` turns a risk-approved decision
-  into a real signed, confirmed transaction on Slip, a separate real settlement venue,
+  into a real signed, confirmed transaction through Tissue's Slip adapter, the only enabled
+  implementation of its reusable venue-execution boundary,
   gated by a second, stricter, off-by-default capital-risk check
   (`risk/gates.ts::evaluateSlipExecution`) layered on top of the existing quote-publication
-  gate. Rehearsed end to end — create market, buy, resolve from a real score proof, claim,
+  gate. Rehearsed end to end through that boundary — independently provision a two-sided market, buy only when
+  opposing liquidity exists and the exact post-stake venue edge clears policy, resolve from
+  a real score proof, claim,
   each step independently verified on-chain — against a local Surfpool instance running the
   real compiled Slip program (`pnpm --filter @tissue/daemon test:slip:surfpool`). Evidence
   (real market/ticket addresses and transaction signatures) is exposed on `/state`,
   `/record`, and the dashboard's `/decisions` page.
+  The packed consumer also verified the hardened unified program capability and decoded five
+  real markets through public devnet RPC at program `7gNEnF...bXFt`; this check was read-only.
+  Mainnet-beta is deliberately refused because Slip's current `buyTicket` instruction has
+  no atomic minimum-payout/slippage guard; the verified localnet/devnet path is not inflated
+  into a production-capital safety claim.
+- **Historical strategy evaluation through the real ingestion boundary.** The immutable
+  workspace corpus contains authenticated TxLINE responses for all 100 completed World Cup
+  fixtures. `pnpm evaluate:fixtures -- --all` starts a local authenticated HTTP/SSE replay
+  service, verifies captured byte length and SHA-256 provenance before serving, and routes
+  those responses through Tissue's production fetchers and normalizers. The fixed
+  sha256-bucket split is 61 calibration / 39 holdout: both report +225bps weighted CLV.
+  Holdout Brier is 0.197298 versus the opening-market baseline's 0.220753; calibration Brier
+  is 0.174960 versus 0.161049, disclosed as a real regression rather than hidden. Full
+  per-fixture evidence is `.superstack/world-cup-evaluation.json`.
