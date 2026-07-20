@@ -25,7 +25,12 @@ ENV NODE_ENV=production
 ENV TISSUE_CORPUS_DIR=/app/corpus
 WORKDIR /app
 COPY --from=build /app/apps/analyst/dist/server.mjs ./apps/analyst/server.mjs
-RUN mkdir -p /app/corpus && chown node:node /app/corpus
+# Real AnalystExport JSON for every archived World Cup fixture (apps/daemon/scripts/exportAnalyst.ts),
+# baked into the image so this service has real data without depending on a shared filesystem with
+# the separately-deployed daemon (the live path writes the SAME shape to its own local corpus dir,
+# which this container can never see — different Railway service, different container).
+COPY apps/analyst/exports /app/corpus
+RUN chown -R node:node /app/corpus
 
 EXPOSE 8787
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
